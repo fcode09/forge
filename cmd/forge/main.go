@@ -2,11 +2,25 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"os"
+	"os/exec"
+	"os/signal"
 
-	"github.com/fcode09/forge/internal/version"
+	"github.com/fcode09/forge/internal/cli"
+	"github.com/fcode09/forge/internal/execx"
 )
 
 func main() {
-	fmt.Println("forge", version.Version)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	app := &cli.App{
+		Stdout: os.Stdout, Stderr: os.Stderr,
+		Runner:   execx.Exec{},
+		LookPath: exec.LookPath,
+		Getwd:    os.Getwd,
+		Stat:     os.Stat,
+		HomeDir:  os.UserHomeDir,
+	}
+	os.Exit(app.Run(ctx, os.Args[1:]))
 }
