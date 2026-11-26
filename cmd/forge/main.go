@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"time"
 
 	"github.com/fcode09/forge/internal/cli"
 	"github.com/fcode09/forge/internal/execx"
@@ -21,6 +22,11 @@ func main() {
 		Getwd:    os.Getwd,
 		Stat:     os.Stat,
 		HomeDir:  os.UserHomeDir,
+		Now:      time.Now,
+		RunnerIn: func(dir string) execx.Runner {
+			// Build and test output goes to stderr so stdout stays clean for --json.
+			return execx.Exec{Options: execx.Options{Dir: dir, Stdout: os.Stderr, Stderr: os.Stderr}}
+		},
 	}
 	os.Exit(app.Run(ctx, os.Args[1:]))
 }

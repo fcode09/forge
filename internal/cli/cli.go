@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fcode09/forge/internal/config"
 	"github.com/fcode09/forge/internal/execx"
@@ -30,6 +31,9 @@ type App struct {
 	Getwd          func() (string, error)
 	Stat           func(string) (os.FileInfo, error)
 	HomeDir        func() (string, error)
+	// RunnerIn returns a runner that executes in dir and streams its output to stderr.
+	RunnerIn func(dir string) execx.Runner
+	Now      func() time.Time
 }
 
 // command is one top-level subcommand.
@@ -40,6 +44,7 @@ type command struct {
 
 func (a *App) commands() map[string]command {
 	return map[string]command{
+		"build":   {"Build the declared images and run the tests", (*App).cmdBuild},
 		"init":    {"Create a forge.yaml example", (*App).cmdInit},
 		"config":  {"Configuration tools (config validate)", (*App).cmdConfig},
 		"doctor":  {"Diagnose Docker, SSH and the configuration", (*App).cmdDoctor},
