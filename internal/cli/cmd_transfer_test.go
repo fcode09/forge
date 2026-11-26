@@ -15,6 +15,12 @@ type fakeExec struct {
 	remotes []string
 	fail    string   // remote command prefix that fails
 	failIf  []string // remote commands containing any of these fail
+
+	getTag           string // answer to `env ... get` (default 1.0.0)
+	afterRollbackTag string // answer to `env ... get` once a rollback ran
+	statusOut        string
+	stagingList      string // answer to `ls -1t`
+	rolled           bool
 }
 
 func (f *fakeExec) Run(ctx context.Context, name string, args ...string) (execx.Result, error) {
@@ -38,8 +44,24 @@ func (f *fakeExec) RunStdin(_ context.Context, stdin io.Reader, name string, arg
 			return execx.Result{Stderr: "failed: " + sub}, &execx.ExitError{Name: "ssh", Code: 1}
 		}
 	}
+	if strings.Contains(remote, " rollback ") {
+		f.rolled = true
+	}
 	if strings.Contains(remote, " env ") && strings.Contains(remote, " get ") {
-		return execx.Result{Stdout: "1.0.0\n"}, nil
+		tag := f.getTag
+		if tag == "" {
+			tag = "1.0.0"
+		}
+		if f.rolled && f.afterRollbackTag != "" {
+			tag = f.afterRollbackTag
+		}
+		return execx.Result{Stdout: tag + "\n"}, nil
+	}
+	if strings.HasSuffix(remote, " status colorado") {
+		return execx.Result{Stdout: f.statusOut}, nil
+	}
+	if strings.HasPrefix(remote, "ls ") {
+		return execx.Result{Stdout: f.stagingList}, nil
 	}
 	if strings.HasPrefix(remote, "df ") {
 		return execx.Result{Stdout: "h\n/dev/x 9 1 99999999 1% /srv\n"}, nil

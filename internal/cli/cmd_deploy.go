@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"time"
 
 	"github.com/fcode09/forge/internal/artifact"
 	"github.com/fcode09/forge/internal/config"
@@ -117,6 +119,17 @@ func (a *App) cmdDeploy(ctx context.Context, args []string) int {
 		return ExitError
 	}
 	res, applyErr := deploy.Apply(ctx, dc, log, plan)
+	ev := release.Event{
+		Action: "deploy", ReleaseID: meta.ReleaseID, Commit: meta.Commit, Instance: cfg.Deployment.Instance,
+		Services: planServices(plan), Outcome: string(res.Outcome),
+	}
+	if applyErr != nil {
+		ev.Error = applyErr.Error()
+	}
+	a.recordEvent(projectDir, ev)
+	if res.Outcome == deploy.Deployed {
+		a.pruneAfterDeploy(ctx, cfg, projectDir, client, meta.ReleaseID, log)
+	}
 	return a.reportDeploy(cfg, res, applyErr, o.asJSON)
 }
 
@@ -228,4 +241,36 @@ func (a *App) reportDeploy(cfg *config.Config, res *deploy.Result, applyErr erro
 		return ExitRollbackFailed
 	}
 	return ExitError
+}
+
+func planServices(p deploy.Plan) []string {
+	out := make([]string, len(p.Images))
+	for i, im := range p.Images {
+		out[i] = im.Service
+	}
+	return out
+}
+
+// recordEvent appends to the local history; a failure to write it is only a warning.
+func (a *App) recordEvent(projectDir string, e release.Event) {
+	e.TimeUTC = a.Now().UTC().Format(time.RFC3339)
+	if err := release.AppendEvent(projectDir, e); err != nil {
+		fmt.Fprintln(a.Stderr, "forge: warning: could not record the release history:", err)
+	}
+}
+
+// pruneAfterDeploy applies retention.releases to the local dist/ and to the host staging area. It never
+// touches loaded Docker images, and a failure is only a warning: the deploy itself already succeeded.
+func (a *App) pruneAfterDeploy(ctx context.Context, cfg *config.Config, projectDir string, client *transport.Client, current string, log *slog.Logger) {
+	keep := cfg.Retention.Releases
+	if removed, err := release.PruneLocal(filepath.Join(projectDir, "dist"), keep, current); err != nil {
+		fmt.Fprintln(a.Stderr, "forge: warning: local retention:", err)
+	} else if len(removed) > 0 {
+		log.Info("removed old local releases", "releases", removed)
+	}
+	if removed, err := client.PruneStaging(ctx, cfg.Deployment.RemoteDir, keep, current); err != nil {
+		fmt.Fprintln(a.Stderr, "forge: warning: staging retention:", err)
+	} else if len(removed) > 0 {
+		log.Info("removed old staged releases on the host", "releases", removed)
+	}
 }

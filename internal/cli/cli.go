@@ -54,6 +54,9 @@ func (a *App) commands() map[string]command {
 	return map[string]command{
 		"build":    {"Build the declared images and run the tests", (*App).cmdBuild},
 		"init":     {"Create a forge.yaml example", (*App).cmdInit},
+		"releases": {"Show the local history of deploys and rollbacks", (*App).cmdReleases},
+		"rollback": {"Roll the instance back to its previous version with deltactl", (*App).cmdRollback},
+		"status":   {"Show the instance status from deltactl", (*App).cmdStatus},
 		"package":  {"Export images and write manifest and checksums", (*App).cmdPackage},
 		"config":   {"Configuration tools (config validate)", (*App).cmdConfig},
 		"deploy":   {"Build, package, transfer and deploy with deltactl", (*App).cmdDeploy},

@@ -296,3 +296,40 @@ func TestParseDfAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneStaging(t *testing.T) {
+	f := &fakeSSH{handle: func(remote string) (execx.Result, error) {
+		if strings.HasPrefix(remote, "ls ") {
+			// newest first; "weird name" and ".hidden" are not release IDs and must be ignored
+			return execx.Result{Stdout: "r5\nr4\nweird name\nr3\n.hidden\nr2\nr1\n"}, nil
+		}
+		return execx.Result{}, nil
+	}}
+	removed, err := newClient(f).PruneStaging(context.Background(), "/srv/forge", 3, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// keep 3 = protected r1 + the two newest (r5, r4); r3 and r2 go.
+	if strings.Join(removed, ",") != "r3,r2" {
+		t.Fatalf("removed=%v", removed)
+	}
+	want := []string{"ls -1t /srv/forge/incoming", "rm -rf -- /srv/forge/incoming/r3", "rm -rf -- /srv/forge/incoming/r2"}
+	if strings.Join(f.remotes(), "|") != strings.Join(want, "|") {
+		t.Fatalf("remotes=%q", f.remotes())
+	}
+	if _, err := newClient(f).PruneStaging(context.Background(), "/srv/forge", 0, ""); err == nil {
+		t.Fatal("keep 0 accepted")
+	}
+	if _, err := newClient(f).PruneStaging(context.Background(), "relative", 2, ""); err == nil {
+		t.Fatal("relative remote dir accepted")
+	}
+}
+
+func TestPruneStagingListFailureRemovesNothing(t *testing.T) {
+	f := &fakeSSH{handle: func(string) (execx.Result, error) {
+		return execx.Result{Stderr: "No such file"}, &execx.ExitError{Name: "ssh", Code: 2}
+	}}
+	if _, err := newClient(f).PruneStaging(context.Background(), "/srv/forge", 2, ""); err == nil || len(f.calls) != 1 {
+		t.Fatalf("err=%v calls=%d", err, len(f.calls))
+	}
+}

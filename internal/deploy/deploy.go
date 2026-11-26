@@ -193,3 +193,50 @@ func Describe(p Plan, deltactl, instance string) []string {
 	}
 	return append(out, d("status", instance))
 }
+
+// Revert asks deltactl to roll the given services back to their previous tags and reports the tags before
+// and after. It is the manual counterpart of the automatic recovery in Apply. A tag that did not change is
+// reported as a problem because it means there was nothing to roll back to.
+func Revert(ctx context.Context, ops Ops, log *slog.Logger, services []string) (*Result, error) {
+	res := &Result{Outcome: RolledBack}
+	if len(services) == 0 {
+		res.Outcome, res.Failed = Aborted, "plan"
+		return res, errors.New("no services to roll back")
+	}
+	before := map[string]string{}
+	for _, s := range services {
+		tag, err := ops.GetTag(ctx, s)
+		if err != nil {
+			res.Outcome, res.Failed = Aborted, "read current tag of "+s
+			return res, err
+		}
+		before[s] = tag
+	}
+	var firstErr error
+	for i := len(services) - 1; i >= 0; i-- {
+		s := services[i]
+		log.Warn("rolling back", "service", s, "from", before[s])
+		if err := ops.Rollback(ctx, s); err != nil {
+			res.Outcome, res.Failed = RollbackFailed, "rollback "+s
+			res.Problems = append(res.Problems, fmt.Sprintf("rollback %s: %v", s, err))
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		after, err := ops.GetTag(ctx, s)
+		switch {
+		case err != nil:
+			res.Outcome = RollbackFailed
+			res.Problems = append(res.Problems, fmt.Sprintf("cannot confirm the tag of %s after rollback: %v", s, err))
+		case after == before[s]:
+			res.Problems = append(res.Problems, fmt.Sprintf("%s is still on tag %q: there was no previous version to go back to", s, after))
+		default:
+			log.Info("rolled back", "service", s, "from", before[s], "to", after)
+		}
+	}
+	if firstErr == nil && res.Outcome == RollbackFailed {
+		firstErr = errors.New("could not confirm the rollback")
+	}
+	return res, firstErr
+}
