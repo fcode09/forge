@@ -1,0 +1,30 @@
+# Example forge.yaml. Lives at the root of the backend project (the one with the Dockerfile).
+# Never put passwords, tokens or private keys in this file.
+version: 1
+
+project:
+  name: auth-backend
+
+build:
+  images:
+    - name: backend
+      service: s0              # deltactl service key (s0 = auth-backend, s1 = gueo-back-end)
+      context: .
+      dockerfile: Dockerfile
+      image: auth-backend      # must match S0_IMAGE of the deltactl instance
+      target: production
+  tests:
+    - ["npm", "test"]          # argv, never a shell line
+
+deployment:
+  host: 10.20.0.2              # private WireGuard IP of the production host
+  user: forge-deploy
+  ssh_port: 22
+  known_hosts: ~/.ssh/known_hosts
+  ssh_key: ~/.ssh/forge_deploy   # dedicated key; optional (default: ssh's own identity selection)
+  remote_dir: /srv/forge
+  deltactl_path: /srv/itc-deploy/deltactl
+  instance: colorado           # deltactl instance to update
+
+retention:
+  releases: 5                  # local artifacts and staging only; never loaded images

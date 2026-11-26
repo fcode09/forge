@@ -1,0 +1,23 @@
+# build output
+/bin/
+/dist/
+
+# local FORGE state
+/.forge/
+
+# Go
+*.test
+*.out
+coverage.*
+
+# editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# never commit secrets
+.env
+.env.*
+*.pem
+*.key
