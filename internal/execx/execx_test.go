@@ -1,6 +1,7 @@
 package execx
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -38,5 +39,17 @@ func TestRunExitCode(t *testing.T) {
 func TestRunMissingProgram(t *testing.T) {
 	if _, err := (Exec{}).Run(context.Background(), "forge-no-such-binary"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRunTeesLiveOutputAndDir(t *testing.T) {
+	var live bytes.Buffer
+	dir := t.TempDir()
+	res, err := Exec{Options: Options{Dir: dir, Stdout: &live}}.Run(context.Background(), "pwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.String() != res.Stdout || !strings.Contains(res.Stdout, dir) {
+		t.Fatalf("live=%q captured=%q", live.String(), res.Stdout)
 	}
 }
