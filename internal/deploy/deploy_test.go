@@ -231,3 +231,45 @@ func TestNoCurrentTagMeansFirstDeploymentIsManual(t *testing.T) {
 		t.Fatalf("nothing may change:\n%s", joined(f))
 	}
 }
+
+func TestRevert(t *testing.T) {
+	f := newOps()
+	f.tags["s0"], f.prev["s0"] = "r2", "1.0.0"
+	f.tags["s1"], f.prev["s1"] = "r2", "2.0.0"
+	res, err := Revert(context.Background(), f, log, []string{"s0", "s1"})
+	if err != nil || res.Outcome != RolledBack || len(res.Problems) != 0 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if f.tags["s0"] != "1.0.0" || f.tags["s1"] != "2.0.0" {
+		t.Fatalf("tags=%v", f.tags)
+	}
+	// reverse order, like the automatic recovery
+	if i, j := strings.Index(joined(f), "rollback s1"), strings.Index(joined(f), "rollback s0"); i < 0 || j < 0 || i > j {
+		t.Fatalf("order:\n%s", joined(f))
+	}
+}
+
+func TestRevertWithNothingToGoBackTo(t *testing.T) {
+	f := newOps() // prev == current for every service
+	res, err := Revert(context.Background(), f, log, []string{"s0"})
+	if err != nil || res.Outcome != RolledBack || len(res.Problems) != 1 || !strings.Contains(res.Problems[0], "no previous version") {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestRevertFailures(t *testing.T) {
+	f := newOps()
+	f.fail["rollback s0"] = errors.New("interrupted run")
+	res, err := Revert(context.Background(), f, log, []string{"s0"})
+	if err == nil || res.Outcome != RollbackFailed {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	f = newOps()
+	f.fail["get s0"] = errors.New("boom")
+	if res, err := Revert(context.Background(), f, log, []string{"s0"}); err == nil || res.Outcome != Aborted || strings.Contains(joined(f), "rollback") {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if res, err := Revert(context.Background(), newOps(), log, nil); err == nil || res.Outcome != Aborted {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
