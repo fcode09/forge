@@ -33,6 +33,8 @@ type App struct {
 	HomeDir        func() (string, error)
 	// RunnerIn returns a runner that executes in dir and streams its output to stderr.
 	RunnerIn func(dir string) execx.Runner
+	// Streamer carries large outputs (docker save) to disk without buffering them.
+	Streamer execx.Streamer
 	Now      func() time.Time
 }
 
@@ -46,6 +48,7 @@ func (a *App) commands() map[string]command {
 	return map[string]command{
 		"build":   {"Build the declared images and run the tests", (*App).cmdBuild},
 		"init":    {"Create a forge.yaml example", (*App).cmdInit},
+		"package": {"Export images and write manifest and checksums", (*App).cmdPackage},
 		"config":  {"Configuration tools (config validate)", (*App).cmdConfig},
 		"doctor":  {"Diagnose Docker, SSH and the configuration", (*App).cmdDoctor},
 		"version": {"Show the FORGE version", (*App).cmdVersion},
