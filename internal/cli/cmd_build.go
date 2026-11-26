@@ -90,12 +90,13 @@ func (a *App) buildRelease(ctx context.Context, cfg *config.Config, projectDir s
 		fmt.Fprintln(a.Stderr, "forge build: reading Git state:", err)
 		return nil, g, ExitError
 	}
+	allowDirty := o.allowDirty || cfg.Build.AllowDirty
 	switch {
-	case !g.IsRepo && !o.allowDirty:
-		fmt.Fprintln(a.Stderr, "forge build: the project is not in a Git repository with at least one commit (use --allow-dirty to build anyway)")
+	case !g.IsRepo && !allowDirty:
+		fmt.Fprintln(a.Stderr, "forge build: the project is not in a Git repository with at least one commit (use --allow-dirty, or set build.allow_dirty: true in forge.yaml, to build anyway)")
 		return nil, g, ExitError
-	case g.Dirty && !o.allowDirty:
-		fmt.Fprintln(a.Stderr, "forge build: the work tree has uncommitted changes (commit them, or use --allow-dirty to build a -dirty release)")
+	case g.Dirty && !allowDirty:
+		fmt.Fprintln(a.Stderr, "forge build: the work tree has uncommitted changes (commit them, use --allow-dirty, or set build.allow_dirty: true in forge.yaml to build a -dirty release)")
 		return nil, g, ExitError
 	}
 
@@ -109,6 +110,9 @@ func (a *App) buildRelease(ctx context.Context, cfg *config.Config, projectDir s
 	}
 
 	log := logging.New(a.Stderr, o.asJSON, o.verbose, logging.NewRunID())
+	if g.Dirty || !g.IsRepo {
+		log.Warn("building from a work tree that is not committed: the release ID is marked -dirty or -nogit", "release", id)
+	}
 	b := &build.Builder{RunnerIn: a.RunnerIn, Log: log, Out: a.Stdout, Now: a.Now}
 	if o.asJSON {
 		b.Out = a.Stderr // keep stdout valid JSON

@@ -43,9 +43,12 @@ type Build struct {
 	// Docker selects where the Docker CLI runs: auto (default), native or wsl (Docker inside WSL, Windows only).
 	Docker string `yaml:"docker"`
 	// WSLDistro names the WSL distribution that has Docker; empty means the default distribution.
-	WSLDistro string     `yaml:"wsl_distro"`
-	Images    []Image    `yaml:"images"`
-	Tests     [][]string `yaml:"tests"`
+	WSLDistro string `yaml:"wsl_distro"`
+	// AllowDirty lets `forge build`, `package`, `ship` and `deploy` run with uncommitted changes, or outside a
+	// Git repository, without passing --allow-dirty each time. The release ID then ends in -dirty or uses -nogit.
+	AllowDirty bool       `yaml:"allow_dirty"`
+	Images     []Image    `yaml:"images"`
+	Tests      [][]string `yaml:"tests"`
 }
 
 // Image is one image built from one Dockerfile and mapped to one deltactl service.

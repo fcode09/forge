@@ -8,6 +8,7 @@ project:
 build:
   docker: auto                 # auto, native or wsl (Docker inside WSL, Windows only); auto tries native first
   # wsl_distro: Ubuntu         # optional: WSL distribution that has Docker (default: your default one)
+  # allow_dirty: true          # build even with uncommitted changes (release ID ends in -dirty); same as --allow-dirty
   images:
     - name: backend
       service: s0              # deltactl service key (s0 = auth-backend, s1 = gueo-back-end); only needed with deployment

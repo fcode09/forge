@@ -145,3 +145,40 @@ func TestBuildNeedsConfig(t *testing.T) {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 }
+
+func TestBuildAllowDirtyFromConfig(t *testing.T) {
+	a, out, errb, ran := buildApp(t, gitRunner{commit: "abc1234", status: " M x\n"})
+	wd, _ := a.Getwd()
+	p := filepath.Join(wd, config.FileName)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without the option the build is still refused, and the message says how to relax it.
+	if code := run(a, "build"); code != ExitError || !strings.Contains(errb.String(), "build.allow_dirty") || len(*ran) != 0 {
+		t.Fatalf("strict default: code=%d err=%q ran=%v", code, errb.String(), *ran)
+	}
+	if err := os.WriteFile(p, []byte(strings.Replace(string(b), "build:\n", "build:\n  allow_dirty: true\n", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errb.Reset()
+	if code := run(a, "build", "--skip-tests"); code != ExitOK || !strings.Contains(out.String(), "-dirty") {
+		t.Fatalf("allow_dirty: code=%d out=%q err=%q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "not committed") {
+		t.Fatalf("a dirty build should warn: %q", errb.String())
+	}
+}
+
+func TestBuildAllowDirtyFromConfigAlsoCoversNoRepo(t *testing.T) {
+	a, out, errb, _ := buildApp(t, gitRunner{notRepo: true})
+	wd, _ := a.Getwd()
+	p := filepath.Join(wd, config.FileName)
+	b, _ := os.ReadFile(p)
+	if err := os.WriteFile(p, []byte(strings.Replace(string(b), "build:\n", "build:\n  allow_dirty: true\n", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(a, "build", "--skip-tests"); code != ExitOK || !strings.Contains(out.String(), "-nogit") {
+		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errb.String())
+	}
+}

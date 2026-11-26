@@ -39,6 +39,9 @@ forge ship --dry-run          # show what would run
 forge ship --release ID       # upload an already packaged release (no rebuild)
 ```
 
+- FORGE refuses to build with uncommitted changes, because the release ID carries the commit. Your own
+  `forge.yaml`, `dist/` and `.forge/` never count. To build anyway, set `build.allow_dirty: true` in
+  `forge.yaml` (or pass `--allow-dirty` once): the release ID then ends in `-dirty`.
 - One `scp -r` is one connection, so a password prompt appears **once**. Authentication is whatever `ssh mpa`
   does in your terminal: FORGE does not disable passwords and never stores them.
 - Host keys are always verified (`StrictHostKeyChecking=yes`): connect once with `ssh mpa` so the host is known.

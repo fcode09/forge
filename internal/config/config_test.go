@@ -235,3 +235,13 @@ func TestUploadRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowDirtyIsAnOptionalBool(t *testing.T) {
+	c, err := Parse(strings.NewReader("version: 1\nbuild:\n  allow_dirty: true\n"))
+	if err != nil || !c.Build.AllowDirty {
+		t.Fatalf("c=%+v err=%v", c, err)
+	}
+	if valid(t).Build.AllowDirty {
+		t.Fatal("the template must stay strict by default")
+	}
+}
