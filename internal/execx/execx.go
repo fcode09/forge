@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 )
 
@@ -105,4 +106,27 @@ func (e Exec) Stream(ctx context.Context, stdout io.Writer, name string, args ..
 		return errb.String(), &ExitError{Name: name, Code: ee.ExitCode(), Stderr: errb.String()}
 	}
 	return errb.String(), fmt.Errorf("run %s: %w", name, err)
+}
+
+// Interactive runs a program attached to the terminal: it reads the keyboard and writes to the screen itself,
+// which is what a password prompt or a progress bar needs. Nothing is captured.
+type Interactive interface {
+	RunInteractive(ctx context.Context, dir, name string, args ...string) error
+}
+
+// RunInteractive implements Interactive. The child gets the real stdin; its stdout and stderr both go to the
+// real stderr so that stdout stays clean for --json. A non-zero exit code returns an *ExitError.
+func (e Exec) RunInteractive(ctx context.Context, dir, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stderr, os.Stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return &ExitError{Name: name, Code: ee.ExitCode()}
+	}
+	return fmt.Errorf("run %s: %w", name, err)
 }

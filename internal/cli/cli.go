@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fcode09/forge/internal/config"
+	"github.com/fcode09/forge/internal/dockerx"
 	"github.com/fcode09/forge/internal/execx"
 	"github.com/fcode09/forge/internal/transport"
 	"github.com/fcode09/forge/internal/version"
@@ -42,6 +43,11 @@ type App struct {
 	Exec     execx.StdinRunner
 	ExecLive execx.StdinRunner
 	Now      func() time.Time
+	// Interactive runs scp attached to the terminal, so a password prompt and the progress bar work.
+	Interactive execx.Interactive
+
+	engine *dockerx.Engine // decided on first use, see dockerEngine
+	goos   string          // operating system; empty means runtime.GOOS (tests set it)
 }
 
 // command is one top-level subcommand.
@@ -57,6 +63,7 @@ func (a *App) commands() map[string]command {
 		"releases": {"Show the local history of deploys and rollbacks", (*App).cmdReleases},
 		"rollback": {"Roll the instance back to its previous version with deltactl", (*App).cmdRollback},
 		"status":   {"Show the instance status from deltactl", (*App).cmdStatus},
+		"ship":     {"Build, package and upload the release to the server with scp", (*App).cmdShip},
 		"package":  {"Export images and write manifest and checksums", (*App).cmdPackage},
 		"config":   {"Configuration tools (config validate)", (*App).cmdConfig},
 		"deploy":   {"Build, package, transfer and deploy with deltactl", (*App).cmdDeploy},
@@ -140,6 +147,16 @@ func (a *App) sshClient(cfg *config.Config, log *slog.Logger) *transport.Client 
 		Log:     log,
 		HomeDir: a.HomeDir,
 	}
+}
+
+// needDeployment reports whether forge.yaml has a deployment section. Commands that talk to deltactl on the
+// server (deploy, transfer, rollback, status) refuse to run without one and say why.
+func (a *App) needDeployment(cmd string, cfg *config.Config) bool {
+	if cfg.Deployment.Configured() {
+		return true
+	}
+	fmt.Fprintf(a.Stderr, "forge %s: forge.yaml has no deployment section; this project only uploads images (use `forge ship`)\n", cmd)
+	return false
 }
 
 func joinLines(lines []string) string { return strings.Join(lines, "\n") }

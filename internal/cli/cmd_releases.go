@@ -45,7 +45,7 @@ func (a *App) cmdReleases(_ context.Context, args []string) int {
 		return ExitOK
 	}
 	if len(evs) == 0 {
-		fmt.Fprintln(a.Stdout, "no deploys or rollbacks recorded yet")
+		fmt.Fprintln(a.Stdout, "no deploys, rollbacks or uploads recorded yet")
 		return ExitOK
 	}
 	for _, e := range evs {
@@ -53,7 +53,11 @@ func (a *App) cmdReleases(_ context.Context, args []string) int {
 		if rel == "" {
 			rel = "-"
 		}
-		fmt.Fprintf(a.Stdout, "%s  %-8s %-26s %-12s %-15s %s\n", e.TimeUTC, e.Action, rel, e.Instance, e.Outcome, strings.Join(e.Services, ","))
+		who := e.Instance // the deltactl instance, or the upload target of a "ship"
+		if who == "" {
+			who = e.Target
+		}
+		fmt.Fprintf(a.Stdout, "%s  %-8s %-26s %-12s %-15s %s\n", e.TimeUTC, e.Action, rel, who, e.Outcome, strings.Join(e.Services, ","))
 	}
 	return ExitOK
 }
@@ -68,6 +72,9 @@ func (a *App) cmdStatus(ctx context.Context, args []string) int {
 	path, cfg, code := a.loadValidConfig("status", *file)
 	if code != ExitOK {
 		return code
+	}
+	if !a.needDeployment("status", cfg) {
+		return ExitError
 	}
 	log := logging.New(a.Stderr, false, *verbose, logging.NewRunID())
 	dc, err := remote.New(a.sshClient(cfg, log), cfg.Deployment.DeltactlPath, cfg.Deployment.Instance)

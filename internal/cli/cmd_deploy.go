@@ -41,6 +41,9 @@ func (a *App) cmdDeploy(ctx context.Context, args []string) int {
 	if code != ExitOK {
 		return code
 	}
+	if !a.needDeployment("deploy", cfg) {
+		return ExitError
+	}
 	projectDir := filepath.Dir(path)
 	cfg = onlyService(cfg, *service)
 	if len(cfg.Build.Images) == 0 {

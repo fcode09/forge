@@ -83,9 +83,15 @@ func (a *App) cmdPackage(ctx context.Context, args []string) int {
 
 // packageRelease exports a built release into outRoot/<release-id>. On failure it prints the reason.
 func (a *App) packageRelease(ctx context.Context, cfg *config.Config, last release.Last, outRoot string, verbose, asJSON bool) (string, *artifact.Metadata, int) {
+	log := logging.New(a.Stderr, asJSON, verbose, logging.NewRunID())
+	engine, err := a.dockerEngine(ctx, cfg, log)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, "forge package:", err)
+		return "", nil, ExitError
+	}
 	p := &artifact.Packager{
-		Run: a.Runner, Stream: a.Streamer, Now: a.Now, ForgeVersion: version.Version,
-		Log: logging.New(a.Stderr, asJSON, verbose, logging.NewRunID()),
+		Run: engine.Runner(a.Runner), Stream: engine.Streamer(a.Streamer), Now: a.Now, ForgeVersion: version.Version,
+		Log: log,
 	}
 	dir, meta, err := p.Package(ctx, artifact.Input{Config: cfg, ReleaseID: last.ReleaseID, Commit: last.Commit, OutRoot: outRoot})
 	if err != nil {

@@ -13,10 +13,11 @@ const historyFile = "history.jsonl"
 // Event is one entry of the local release history (.forge/history.jsonl, one JSON object per line).
 type Event struct {
 	TimeUTC   string   `json:"time_utc"`
-	Action    string   `json:"action"` // "deploy" or "rollback"
+	Action    string   `json:"action"` // "deploy", "rollback" or "ship"
 	ReleaseID string   `json:"release_id,omitempty"`
 	Commit    string   `json:"commit,omitempty"`
-	Instance  string   `json:"instance"`
+	Instance  string   `json:"instance,omitempty"`
+	Target    string   `json:"target,omitempty"` // upload target of a "ship"
 	Services  []string `json:"services,omitempty"`
 	Outcome   string   `json:"outcome"`
 	Error     string   `json:"error,omitempty"`

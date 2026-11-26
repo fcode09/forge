@@ -4,9 +4,11 @@ package doctor
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/fcode09/forge/internal/config"
+	"github.com/fcode09/forge/internal/dockerx"
 	"github.com/fcode09/forge/internal/execx"
 )
 
@@ -33,6 +35,7 @@ type Deps struct {
 	LookPath func(string) (string, error)
 	Stat     func(string) (os.FileInfo, error)
 	HomeDir  func() (string, error)
+	GOOS     string // operating system; empty means runtime.GOOS
 }
 
 // Input is what doctor inspects.
@@ -48,9 +51,12 @@ func Run(ctx context.Context, d Deps, in Input) []Check {
 	var out []Check
 	out = append(out, checkConfig(in))
 	out = append(out, checkGit(ctx, d, in.ProjectDir)...)
-	out = append(out, checkDocker(ctx, d)...)
+	out = append(out, checkDocker(ctx, d, in.Config)...)
 	out = append(out, checkBinary(d, "ssh", Fail))
-	if in.Config != nil {
+	if in.Config != nil && in.Config.HasUpload() {
+		out = append(out, checkBinary(d, "scp", Fail)) // `forge ship` copies with scp
+	}
+	if in.Config != nil && in.Config.Deployment.Configured() {
 		out = append(out, checkKnownHosts(d, in.Config.Deployment.KnownHosts))
 	}
 	return out
@@ -99,16 +105,32 @@ func checkGit(ctx context.Context, d Deps, dir string) []Check {
 	return []Check{bin, {"git-repo", OK, "inside a Git work tree"}}
 }
 
-func checkDocker(ctx context.Context, d Deps) []Check {
-	bin := checkBinary(d, "docker", Fail)
-	if bin.Status != OK {
-		return []Check{bin}
+// checkDocker reports the Docker engine FORGE would use: the native CLI or, on Windows, Docker inside WSL.
+func checkDocker(ctx context.Context, d Deps, cfg *config.Config) []Check {
+	var mode, distro string
+	if cfg != nil {
+		mode, distro = cfg.Build.Docker, cfg.Build.WSLDistro
 	}
-	res, err := d.Runner.Run(ctx, "docker", "version", "--format", "{{.Server.Version}}")
+	goos := d.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	e, err := dockerx.Detect(ctx, mode, distro, goos, d.Runner)
 	if err != nil {
-		return []Check{bin, {"docker-daemon", Fail, "docker daemon does not answer: " + firstLine(res.Stderr, err)}}
+		return []Check{{"docker-daemon", Fail, err.Error()}}
 	}
-	return []Check{bin, {"docker-daemon", OK, "server " + strings.TrimSpace(res.Stdout)}}
+	bin := Check{"docker", OK, "wsl.exe -e docker (" + e.String() + ")"}
+	if e.Mode == dockerx.Native {
+		bin = checkBinary(d, "docker", Fail)
+	}
+	return []Check{bin, {"docker-daemon", OK, "server " + e.Version + viaWSL(e)}}
+}
+
+func viaWSL(e dockerx.Engine) string {
+	if e.Mode == dockerx.WSL {
+		return " via " + e.String()
+	}
+	return ""
 }
 
 func checkKnownHosts(d Deps, path string) Check {

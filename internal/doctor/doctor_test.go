@@ -112,3 +112,40 @@ func TestKnownHostsMissingIsWarning(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestDockerInsideWSLIsReported(t *testing.T) {
+	r := &fakeRunner{fn: func(name string, args []string) (execx.Result, error) {
+		switch name {
+		case "git":
+			return execx.Result{Stdout: "true\n"}, nil
+		case "docker":
+			return execx.Result{}, errors.New("executable file not found")
+		}
+		return execx.Result{Stdout: "28.1.1\n"}, nil // wsl.exe -e docker version
+	}}
+	d := deps(r, "docker")
+	d.GOOS = "windows"
+	cs := Run(context.Background(), d, Input{ProjectDir: "/p", ConfigPath: "/p/forge.yaml", Config: goodConfig(t)})
+	if Failed(cs) {
+		t.Fatalf("unexpected failure: %+v", cs)
+	}
+	if got := byName(cs, "docker-daemon").Detail; got != "server 28.1.1 via WSL" {
+		t.Fatalf("detail = %q", got)
+	}
+	if got := byName(cs, "docker").Detail; !strings.Contains(got, "wsl.exe") {
+		t.Fatalf("docker detail = %q", got)
+	}
+}
+
+func TestScpCheckedOnlyWhenUploadIsConfigured(t *testing.T) {
+	r := &fakeRunner{fn: func(string, []string) (execx.Result, error) { return execx.Result{Stdout: "true\n"}, nil }}
+	with := goodConfig(t) // the template has an upload section
+	if c := byName(Run(context.Background(), deps(r, "scp"), Input{ProjectDir: "/p", Config: with}), "scp"); c.Status != Fail {
+		t.Fatalf("scp missing must fail when upload is configured: %+v", c)
+	}
+	without := goodConfig(t)
+	without.Upload = config.Upload{}
+	if c := byName(Run(context.Background(), deps(r, "scp"), Input{ProjectDir: "/p", Config: without}), "scp"); c.Name != "" {
+		t.Fatalf("scp must not be checked without upload: %+v", c)
+	}
+}

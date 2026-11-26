@@ -25,8 +25,10 @@ func Read(ctx context.Context, r execx.Runner, dir string) (Info, error) {
 	if commit == "" {
 		return Info{}, nil
 	}
-	// FORGE's own output directories do not count as changes to the project.
-	st, err := r.Run(ctx, "git", "-C", dir, "status", "--porcelain", "--", ".", ":(exclude)dist", ":(exclude).forge")
+	// FORGE's own files do not count as changes to the project: its output directories and its configuration,
+	// which is usually local to the machine and not committed.
+	st, err := r.Run(ctx, "git", "-C", dir, "status", "--porcelain", "--", ".",
+		":(exclude)dist", ":(exclude).forge", ":(exclude)forge.yaml")
 	if err != nil {
 		return Info{}, err
 	}

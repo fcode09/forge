@@ -24,6 +24,8 @@ type Options struct {
 	Commit     string // short commit SHA for the image labels; may be empty
 	SkipTests  bool
 	DryRun     bool // print what would run, execute nothing
+	// DaemonChecked means the caller already verified that a Docker engine answers, so Run does not probe again.
+	DaemonChecked bool
 }
 
 // ImageResult is one built image.
@@ -82,7 +84,7 @@ func (b *Builder) Run(ctx context.Context, cfg *config.Config, o Options) (*Resu
 	res := &Result{ReleaseID: o.ReleaseID, DryRun: o.DryRun}
 	run := b.RunnerIn(o.ProjectDir)
 
-	if !o.DryRun {
+	if !o.DryRun && !o.DaemonChecked {
 		if _, err := run.Run(ctx, "docker", "version", "--format", "{{.Server.Version}}"); err != nil {
 			return nil, stepError("docker daemon", nil, err)
 		}

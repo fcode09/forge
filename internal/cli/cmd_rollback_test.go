@@ -87,7 +87,7 @@ func TestDeployRecordsHistoryAndReleasesListsIt(t *testing.T) {
 func TestReleasesEmptyAndStatus(t *testing.T) {
 	f := &fakeExec{statusOut: "instance colorado: 1/1 healthy\n"}
 	a, out, errb := transferApp(t, f)
-	if code := run(a, "releases"); code != ExitOK || !strings.Contains(out.String(), "no deploys or rollbacks") {
+	if code := run(a, "releases"); code != ExitOK || !strings.Contains(out.String(), "no deploys, rollbacks or uploads") {
 		t.Fatalf("code=%d out=%q", code, out.String())
 	}
 	out.Reset()
