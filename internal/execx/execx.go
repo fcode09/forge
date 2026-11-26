@@ -26,6 +26,8 @@ type Runner interface {
 type Options struct {
 	Dir   string
 	Stdin io.Reader
+	// Stdout and Stderr, when set, receive the output live in addition to it being captured in the Result.
+	Stdout, Stderr io.Writer
 }
 
 // Exec is the real Runner backed by os/exec.
@@ -37,7 +39,7 @@ func (e Exec) Run(ctx context.Context, name string, args ...string) (Result, err
 	cmd.Dir = e.Options.Dir
 	cmd.Stdin = e.Options.Stdin
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	cmd.Stdout, cmd.Stderr = tee(&out, e.Options.Stdout), tee(&errb, e.Options.Stderr)
 	err := cmd.Run()
 	res := Result{Stdout: out.String(), Stderr: errb.String()}
 	if err == nil {
@@ -60,4 +62,11 @@ type ExitError struct {
 
 func (e *ExitError) Error() string {
 	return fmt.Sprintf("%s exited with code %d", e.Name, e.Code)
+}
+
+func tee(capture *bytes.Buffer, live io.Writer) io.Writer {
+	if live == nil {
+		return capture
+	}
+	return io.MultiWriter(capture, live)
 }

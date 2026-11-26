@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fcode09/forge/internal/config"
 	"github.com/fcode09/forge/internal/execx"
@@ -33,6 +34,8 @@ func newApp(t *testing.T, dir string) (*App, *bytes.Buffer, *bytes.Buffer) {
 		Getwd:    func() (string, error) { return dir, nil },
 		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
 		HomeDir:  func() (string, error) { return "/home/u", nil },
+		Now:      func() time.Time { return time.Date(2026, 11, 25, 22, 0, 0, 0, time.UTC) },
+		RunnerIn: func(string) execx.Runner { return okRunner{} },
 	}, &out, &errb
 }
 
