@@ -199,3 +199,18 @@ func TestSafeRelPath(t *testing.T) {
 		}
 	}
 }
+
+func TestReadMetadata(t *testing.T) {
+	dir := release(t)
+	m, err := ReadMetadata(dir)
+	if err != nil || m.Instance != "colorado" || len(m.Images) != 1 || m.Images[0].File != "images/backend.tar.gz" {
+		t.Fatalf("m=%+v err=%v", m, err)
+	}
+	// metadata.json is covered by the checksums, so editing it is detected.
+	if err := os.WriteFile(filepath.Join(dir, MetadataFile), []byte(`{"schema_version":1,"images":[{"file":"../../etc/passwd"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMetadata(dir); err == nil {
+		t.Fatal("tampered metadata accepted")
+	}
+}

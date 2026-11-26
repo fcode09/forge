@@ -106,3 +106,27 @@ func parseChecksums(s string) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// ReadMetadata verifies dir and returns its metadata.json.
+func ReadMetadata(dir string) (*Metadata, error) {
+	if err := Verify(dir); err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(filepath.Join(dir, MetadataFile))
+	if err != nil {
+		return nil, err
+	}
+	var m Metadata
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("%s: %w", MetadataFile, err)
+	}
+	if m.SchemaVersion != SchemaVersion {
+		return nil, fmt.Errorf("%s: unsupported schema_version %d", MetadataFile, m.SchemaVersion)
+	}
+	for _, im := range m.Images {
+		if err := SafeRelPath(im.File); err != nil {
+			return nil, fmt.Errorf("%s: %w", MetadataFile, err)
+		}
+	}
+	return &m, nil
+}
