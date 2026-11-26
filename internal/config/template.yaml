@@ -21,6 +21,7 @@ deployment:
   user: forge-deploy
   ssh_port: 22
   known_hosts: ~/.ssh/known_hosts
+  ssh_key: ~/.ssh/forge_deploy   # dedicated key; optional (default: ssh's own identity selection)
   remote_dir: /srv/forge
   deltactl_path: /srv/itc-deploy/deltactl
   instance: colorado           # deltactl instance to update
