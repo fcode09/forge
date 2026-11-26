@@ -1,0 +1,63 @@
+// Package execx runs external programs with an argument vector and never through a shell.
+package execx
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os/exec"
+)
+
+// Result is the outcome of one command.
+type Result struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}
+
+// Runner runs a program. It is an interface so callers can be tested without real tools.
+type Runner interface {
+	Run(ctx context.Context, name string, args ...string) (Result, error)
+}
+
+// Options adjusts how Exec runs a program.
+type Options struct {
+	Dir   string
+	Stdin io.Reader
+}
+
+// Exec is the real Runner backed by os/exec.
+type Exec struct{ Options Options }
+
+// Run executes name with args. A non-zero exit code returns a Result and a non-nil *ExitError.
+func (e Exec) Run(ctx context.Context, name string, args ...string) (Result, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = e.Options.Dir
+	cmd.Stdin = e.Options.Stdin
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	res := Result{Stdout: out.String(), Stderr: errb.String()}
+	if err == nil {
+		return res, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		res.ExitCode = ee.ExitCode()
+		return res, &ExitError{Name: name, Code: res.ExitCode, Stderr: res.Stderr}
+	}
+	return res, fmt.Errorf("run %s: %w", name, err)
+}
+
+// ExitError reports a program that ran and exited with a non-zero code.
+type ExitError struct {
+	Name   string
+	Code   int
+	Stderr string
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("%s exited with code %d", e.Name, e.Code)
+}
