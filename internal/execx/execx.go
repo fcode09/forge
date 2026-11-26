@@ -35,9 +35,20 @@ type Exec struct{ Options Options }
 
 // Run executes name with args. A non-zero exit code returns a Result and a non-nil *ExitError.
 func (e Exec) Run(ctx context.Context, name string, args ...string) (Result, error) {
+	return e.RunStdin(ctx, e.Options.Stdin, name, args...)
+}
+
+// StdinRunner is a Runner that can also feed the program's standard input.
+type StdinRunner interface {
+	Runner
+	RunStdin(ctx context.Context, stdin io.Reader, name string, args ...string) (Result, error)
+}
+
+// RunStdin is Run with stdin as the program's standard input.
+func (e Exec) RunStdin(ctx context.Context, stdin io.Reader, name string, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = e.Options.Dir
-	cmd.Stdin = e.Options.Stdin
+	cmd.Stdin = stdin
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = tee(&out, e.Options.Stdout), tee(&errb, e.Options.Stderr)
 	err := cmd.Run()

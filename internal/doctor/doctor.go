@@ -49,7 +49,7 @@ func Run(ctx context.Context, d Deps, in Input) []Check {
 	out = append(out, checkConfig(in))
 	out = append(out, checkGit(ctx, d, in.ProjectDir)...)
 	out = append(out, checkDocker(ctx, d)...)
-	out = append(out, checkBinary(d, "ssh", Fail), checkBinary(d, "sftp", Fail))
+	out = append(out, checkBinary(d, "ssh", Fail))
 	if in.Config != nil {
 		out = append(out, checkKnownHosts(d, in.Config.Deployment.KnownHosts))
 	}

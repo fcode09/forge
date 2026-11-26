@@ -57,6 +57,7 @@ type Deployment struct {
 	User         string `yaml:"user"`
 	SSHPort      int    `yaml:"ssh_port"`
 	KnownHosts   string `yaml:"known_hosts"`
+	SSHKey       string `yaml:"ssh_key"`
 	RemoteDir    string `yaml:"remote_dir"`
 	DeltactlPath string `yaml:"deltactl_path"`
 	Instance     string `yaml:"instance"`
@@ -197,6 +198,14 @@ func (c *Config) Validate() []string {
 	}
 	if d.SSHPort < 1 || d.SSHPort > 65535 {
 		add("deployment.ssh_port", "must be between 1 and 65535, got %d", d.SSHPort)
+	}
+	if d.SSHKey != "" {
+		if strings.ContainsAny(d.SSHKey, " \t\n'\"\\$`;&|<>*?") || !(strings.HasPrefix(d.SSHKey, "/") || strings.HasPrefix(d.SSHKey, "~/")) {
+			add("deployment.ssh_key", "must be an absolute path or start with ~/ and contain no spaces or shell characters, got %q", d.SSHKey)
+		}
+	}
+	if strings.ContainsAny(d.KnownHosts, " \t\n'\"\\$`;&|<>*?") {
+		add("deployment.known_hosts", "must not contain spaces or shell characters, got %q", d.KnownHosts)
 	}
 	if err := absPath(d.RemoteDir); err != nil {
 		add("deployment.remote_dir", "%v", err)

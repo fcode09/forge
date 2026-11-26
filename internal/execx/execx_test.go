@@ -66,3 +66,10 @@ func TestStreamCopiesStdoutWithoutBuffering(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestRunStdin(t *testing.T) {
+	res, err := Exec{}.RunStdin(context.Background(), strings.NewReader("piped"), "cat")
+	if err != nil || res.Stdout != "piped" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
