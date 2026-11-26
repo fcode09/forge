@@ -13,7 +13,8 @@ import (
 // fakeExec stands in for the ssh binary: it records the remote command (last argument).
 type fakeExec struct {
 	remotes []string
-	fail    string // remote command prefix that fails
+	fail    string   // remote command prefix that fails
+	failIf  []string // remote commands containing any of these fail
 }
 
 func (f *fakeExec) Run(ctx context.Context, name string, args ...string) (execx.Result, error) {
@@ -32,6 +33,14 @@ func (f *fakeExec) RunStdin(_ context.Context, stdin io.Reader, name string, arg
 	if f.fail != "" && strings.HasPrefix(remote, f.fail) {
 		return execx.Result{Stderr: "Host key verification failed."}, &execx.ExitError{Name: "ssh", Code: 255}
 	}
+	for _, sub := range f.failIf {
+		if strings.Contains(remote, sub) {
+			return execx.Result{Stderr: "failed: " + sub}, &execx.ExitError{Name: "ssh", Code: 1}
+		}
+	}
+	if strings.Contains(remote, " env ") && strings.Contains(remote, " get ") {
+		return execx.Result{Stdout: "1.0.0\n"}, nil
+	}
 	if strings.HasPrefix(remote, "df ") {
 		return execx.Result{Stdout: "h\n/dev/x 9 1 99999999 1% /srv\n"}, nil
 	}
@@ -41,7 +50,7 @@ func (f *fakeExec) RunStdin(_ context.Context, stdin io.Reader, name string, arg
 func transferApp(t *testing.T, f *fakeExec) (*App, *strings.Builder, *strings.Builder) {
 	t.Helper()
 	a, out, errb, _ := packageApp(t)
-	a.Exec = f
+	a.Exec, a.ExecLive = f, f
 	return a, out, errb
 }
 
