@@ -53,3 +53,16 @@ func TestRunTeesLiveOutputAndDir(t *testing.T) {
 		t.Fatalf("live=%q captured=%q", live.String(), res.Stdout)
 	}
 }
+
+func TestStreamCopiesStdoutWithoutBuffering(t *testing.T) {
+	var out bytes.Buffer
+	stderr, err := Exec{}.Stream(context.Background(), &out, "sh", "-c", "printf data; printf warn >&2")
+	if err != nil || out.String() != "data" || stderr != "warn" {
+		t.Fatalf("out=%q stderr=%q err=%v", out.String(), stderr, err)
+	}
+	_, err = Exec{}.Stream(context.Background(), &out, "sh", "-c", "exit 4")
+	var ee *ExitError
+	if !errors.As(err, &ee) || ee.Code != 4 {
+		t.Fatalf("err=%v", err)
+	}
+}

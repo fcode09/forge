@@ -70,3 +70,28 @@ func tee(capture *bytes.Buffer, live io.Writer) io.Writer {
 	}
 	return io.MultiWriter(capture, live)
 }
+
+// Streamer runs a program and copies its stdout to a writer instead of buffering it, for large outputs
+// such as `docker save`. Only stderr is captured.
+type Streamer interface {
+	Stream(ctx context.Context, stdout io.Writer, name string, args ...string) (stderr string, err error)
+}
+
+// Stream implements Streamer. A non-zero exit code returns an *ExitError.
+func (e Exec) Stream(ctx context.Context, stdout io.Writer, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = e.Options.Dir
+	cmd.Stdin = e.Options.Stdin
+	var errb bytes.Buffer
+	cmd.Stdout = stdout
+	cmd.Stderr = tee(&errb, e.Options.Stderr)
+	err := cmd.Run()
+	if err == nil {
+		return errb.String(), nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return errb.String(), &ExitError{Name: name, Code: ee.ExitCode(), Stderr: errb.String()}
+	}
+	return errb.String(), fmt.Errorf("run %s: %w", name, err)
+}
