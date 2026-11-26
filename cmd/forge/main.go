@@ -23,6 +23,7 @@ func main() {
 		Stat:     os.Stat,
 		HomeDir:  os.UserHomeDir,
 		Now:      time.Now,
+		Streamer: execx.Exec{},
 		RunnerIn: func(dir string) execx.Runner {
 			// Build and test output goes to stderr so stdout stays clean for --json.
 			return execx.Exec{Options: execx.Options{Dir: dir, Stdout: os.Stderr, Stderr: os.Stderr}}

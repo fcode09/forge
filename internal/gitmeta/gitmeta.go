@@ -25,7 +25,8 @@ func Read(ctx context.Context, r execx.Runner, dir string) (Info, error) {
 	if commit == "" {
 		return Info{}, nil
 	}
-	st, err := r.Run(ctx, "git", "-C", dir, "status", "--porcelain")
+	// FORGE's own output directories do not count as changes to the project.
+	st, err := r.Run(ctx, "git", "-C", dir, "status", "--porcelain", "--", ".", ":(exclude)dist", ":(exclude).forge")
 	if err != nil {
 		return Info{}, err
 	}

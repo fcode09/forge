@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/fcode09/forge/internal/build"
 	"github.com/fcode09/forge/internal/gitmeta"
@@ -70,6 +71,13 @@ func (a *App) cmdBuild(ctx context.Context, args []string) int {
 	if err != nil {
 		fmt.Fprintln(a.Stderr, "forge build:", err)
 		return ExitError
+	}
+
+	if !*dryRun {
+		last := release.Last{ReleaseID: res.ReleaseID, Commit: g.Commit, CreatedUTC: a.Now().UTC().Format(time.RFC3339)}
+		if err := release.SaveLast(projectDir, last); err != nil {
+			fmt.Fprintln(a.Stderr, "forge build: warning: could not record the build:", err)
+		}
 	}
 
 	if *asJSON {
