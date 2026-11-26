@@ -1,88 +1,95 @@
 # FORGE — Local Go CI/CD Deployment Platform
-## Plan de desarrollo v1.0
+## Plan de desarrollo v1.1
 
 **Nombre:** FORGE  
 **Tagline:** Build local. Ship securely. Deploy reliably.  
-**Versión del plan:** 1.0  
+**Versión del plan:** 1.1 (integración con `itc-deploy`)  
 **Lenguaje:** Go  
-**Objetivo:** construir una herramienta de CI/CD self-hosted, sin servicios SaaS ni scripts Bash como lógica de despliegue. El comando se ejecuta desde la carpeta de un proyecto y construye, empaqueta, transfiere y despliega imágenes Docker en un servidor remoto a través de una VPN privada.
+**Objetivo:** herramienta de CI/CD self-hosted, sin servicios SaaS. Se ejecuta desde la carpeta de un proyecto y **construye, empaqueta y transfiere** imágenes Docker a un servidor a través de una VPN privada. El **despliegue en el servidor lo hace `itc-deploy` (`deltactl`)**, que FORGE dispara por SSH.
+
+> **Cambios respecto a v1.0:** se elimina `forge-agent`. Compose, healthchecks, historial de despliegues y rollback ya los resuelve `deltactl` (repo `itc-deploy`); FORGE no los reimplementa. Ver secciones 2, 8, 9 y 10 y los milestones M5–M7.
 
 ---
 
 ## 1. Visión
 
-FORGE será una herramienta CLI en Go para automatizar el ciclo de despliegue de proyectos Docker/Compose.
+FORGE es una herramienta CLI en Go que automatiza el tramo "del código a la imagen cargada en el servidor" y lo conecta con `deltactl`.
 
 Desde la raíz del proyecto:
 
 ```bash
 forge build
 forge deploy
-forge release
 forge rollback
 ```
 
-La primera versión prioriza ejecución explícita desde la ubicación del proyecto (modo local), con un servidor remoto de producción y comunicación por VPN. Más adelante se puede añadir un servidor CI dedicado que reciba eventos de Git y ejecute pipelines automáticos.
+La primera versión prioriza ejecución explícita desde la ubicación del proyecto (modo local), con un servidor de producción y comunicación por VPN. Más adelante se puede añadir un servidor CI dedicado que ejecute los mismos comandos.
 
 **Principios:**
-- Todo el código propio en Go.
-- No usar Bash como orquestador ni lógica de deployment.
+- Todo el código propio de FORGE en Go. **FORGE no escribe Bash**: usa el `deltactl` ya existente como ejecutor remoto, con argv fijo y sin shell.
 - No depender de GitLab Cloud, GitHub Actions, Docker Hub ni un registry SaaS.
-- Aprovechar Docker Engine/BuildKit y Docker Compose, invocados desde Go mediante APIs o subprocesses controlados.
-- Transferencia de artefactos por SSH/SCP sobre VPN.
+- Docker Engine/BuildKit invocados desde Go con subprocesos controlados (argv, sin shell).
+- Transferencia de artefactos por SSH/SFTP sobre VPN.
 - Configuración declarativa y validada.
-- Versiones reproducibles, checksums, logs y rollback.
-- No tocar volúmenes persistentes ni datos de bases de datos durante un despliegue normal.
+- Versiones reproducibles, checksums y logs.
+- No tocar volúmenes persistentes ni datos de bases de datos (lo garantiza `deltactl`).
 
 ## 2. Arquitectura objetivo
 
 ```text
-Developer / project directory
-        |
-        | forge build / forge deploy
-        v
-FORGE CLI (Go)
+FORGE CLI (Go) — máquina de desarrollo o servidor CI
   ├── Config loader + validator
-  ├── Git metadata / versioning
-  ├── Docker build
-  ├── Image export (OCI archive or Docker archive)
+  ├── Git metadata / release-id
+  ├── Docker build + tests
+  ├── Image export (docker save + gzip)
   ├── SHA-256 manifest
-  ├── SSH/VPN transport
-  └── Deployment orchestration
+  ├── SSH/SFTP transport (VPN)
+  └── Remote executor (lista cerrada de comandos deltactl)
         |
         | WireGuard network + SSH
         v
-Production host (Ubuntu)
-  ├── FORGE receiver/agent (Go)
-  ├── Artifact validation
-  ├── Docker image import
-  ├── Compose deployment
-  ├── Health checks
-  ├── Release history
-  └── Rollback
+Servidor de producción (Ubuntu) — repo itc-deploy
+  ├── /srv/forge/incoming/<release-id>/   (staging, validado con sha256sum -c)
+  └── deltactl
+        ├── load       (docker load)
+        ├── env set    (S0_TAG / S1_TAG)
+        ├── check      (validación sin levantar nada)
+        ├── deploy     (Compose + espera a healthy + guarda etiquetas previas)
+        └── rollback   (vuelve a las etiquetas previas)
 ```
 
+### Frontera FORGE / itc-deploy
+
+| FORGE (este repo) | `itc-deploy` / `deltactl` (no se modifica desde aquí) |
+|---|---|
+| `forge.yaml`, `doctor` local | Compose, redes, puertos y secretos por instancia |
+| Build con tags inmutables `<imagen>:<release-id>` | Cargar la imagen y validar la instancia |
+| Tests, export, manifest y SHA-256 | Levantar y esperar `healthy` |
+| Transferencia y validación del checksum | Guardar etiquetas previas y hacer rollback |
+| Disparar `deltactl` con una lista cerrada de comandos | Historial y bloqueo de operaciones (`runs`) |
+
+`itc-deploy` empieza "cuando la imagen ya está en el Docker del servidor"; FORGE termina de dejarla allí y lo invoca.
+
 ### Fase inicial (v1.0)
-El CLI se ejecuta desde la máquina de desarrollo o el servidor CI, dentro del proyecto. El servidor de producción solo expone un endpoint de recepción/despliegue protegido por SSH sobre la VPN.
+El CLI se ejecuta desde la máquina de desarrollo o el servidor CI, dentro del proyecto del backend (no dentro de `itc-deploy`).
 
 ### Evolución (v1.x)
-Un servidor CI dedicado puede clonar repositorios, ejecutar `forge build` y `forge deploy` automáticamente por webhook o Git hook. El mismo CLI y formato de artefactos se reutilizan.
+Un servidor CI dedicado puede clonar repositorios y ejecutar `forge deploy` por webhook o Git hook, reutilizando el mismo CLI y formato de artefactos.
 
 ## 3. Stack
 
-- **Lenguaje:** Go (versión estable vigente al iniciar implementación).
-- **CLI:** `cobra` (comandos, flags, ayuda).
-- **Configuración:** YAML (`forge.yaml`), validación con esquema/structs Go.
+- **Lenguaje:** Go (la versión instalada al iniciar: 1.27.x).
+- **CLI:** biblioteca estándar (`flag`) con un despachador de subcomandos propio. Sin cobra.
+- **Configuración:** YAML (`forge.yaml`) con `gopkg.in/yaml.v3`, la única dependencia externa, tomada de la caché local de módulos (sin descargas). Validación sobre structs Go.
 - **Logs:** `slog`, salida legible y modo JSON.
-- **Git:** CLI Git invocado de forma segura, o librería si los requisitos lo justifican.
-- **Build:** Docker BuildKit / Docker Engine. En v1, invocar Docker CLI con argumentos separados (sin shell), comprobando errores y versiones. Evaluar Docker API después.
-- **Export de imágenes:** `docker save` y compresión gzip, o OCI archive si se adopta un flujo compatible.
-- **Transporte:** SSH con claves, SCP/SFTP o transferencia SSH stream. No exponer el receiver a Internet.
-- **Servidor remoto:** agente Go, ejecutado como servicio systemd.
-- **Runtime:** Docker Engine y Docker Compose plugin.
-- **Estado:** SQLite (historial de releases y despliegues).
+- **Git:** CLI `git` invocado con argv.
+- **Build:** Docker CLI con argumentos separados (sin shell), comprobando errores y versiones.
+- **Export:** `docker save` + gzip.
+- **Transporte:** binarios `ssh` y `sftp` del sistema invocados con argv; `StrictHostKeyChecking` activo. No se expone nada a Internet.
+- **Servidor remoto:** `deltactl` (repo `itc-deploy`). No hay agente de FORGE.
+- **Estado local:** archivo JSON de releases en el proyecto (`.forge/`), sin base de datos.
 - **Checksums:** SHA-256.
-- **VPN:** WireGuard, administrada fuera de FORGE; FORGE verifica conectividad/configuración, no configura VPN en la primera versión.
+- **VPN:** WireGuard, administrada fuera de FORGE; FORGE verifica conectividad.
 
 ## 4. Comandos CLI propuestos
 
@@ -91,180 +98,138 @@ forge init                 Crear forge.yaml de ejemplo
 forge config validate      Validar configuración
 forge build                Construir las imágenes declaradas
 forge package              Exportar imágenes y generar manifest/checksum
-forge transfer             Transferir artefacto al host remoto
-forge deploy               Ejecutar build + package + transfer + deploy
-forge status               Consultar estado del host y último release
-forge releases             Mostrar historial
-forge rollback             Volver al release anterior o a uno especificado
-forge doctor               Diagnóstico de Docker, SSH, VPN y configuración
+forge transfer             Transferir artefacto al servidor
+forge deploy               build + package + transfer + deltactl load/check/deploy
+forge status               Estado de la instancia (deltactl status) y último release local
+forge releases             Historial local de releases
+forge rollback             deltactl rollback de la instancia (o de un servicio)
+forge doctor               Diagnóstico de Docker, SSH, VPN, deltactl y configuración
 forge version              Mostrar versión del CLI
 ```
 
-Opcionales:
-- `--dry-run`: imprimir acciones sin ejecutarlas.
-- `--project`, `--config`: seleccionar proyecto/configuración.
-- `--tag`: override de versión (validado).
-- `--verbose`: logs detallados.
-- `--json`: salida apta para automatización.
+Opcionales: `--dry-run`, `--config`, `--tag` (validado), `--verbose`, `--json`.
 
 ## 5. Configuración de proyecto
 
-Archivo `forge.yaml` en la raíz:
+`forge.yaml` vive en la raíz del **proyecto del backend** (el que tiene el Dockerfile):
 
 ```yaml
 version: 1
 
 project:
-  name: itc-deploy
-  compose_file: docker-compose.yml
-  working_dir: .
+  name: auth-backend
 
 build:
   images:
     - name: backend
+      service: s0              # clave del servicio en deltactl (s0 = auth-backend, s1 = gueo-back-end)
       context: .
       dockerfile: Dockerfile
-      image: itc-backend
+      image: auth-backend      # debe coincidir con S0_IMAGE de la instancia
       target: production
-    # Añadir frontend u otros servicios si tienen Dockerfile propio.
+  tests:
+    - ["npm", "test"]          # argv, nunca una línea de shell
 
 deployment:
-  host: 10.20.0.2        # IP privada WireGuard del host de producción
+  host: 10.20.0.2              # IP privada WireGuard
   user: forge-deploy
   ssh_port: 22
+  known_hosts: ~/.ssh/known_hosts
   remote_dir: /srv/forge
-  compose_project: itc-deploy
-  compose_file: docker-compose.yml
-
-healthcheck:
-  timeout: 90s
-  interval: 5s
-  # Definir checks HTTP o checks de contenedor según el proyecto.
+  deltactl_path: /srv/itc-deploy/deltactl
+  instance: colorado           # instancia de deltactl a actualizar
 
 retention:
-  releases: 5
+  releases: 5                  # artefactos locales y en staging; nunca imágenes cargadas
 ```
 
-No incluir claves privadas, contraseñas ni tokens en este archivo. Secretos mediante archivos protegidos localmente o variables de entorno; para v1, documentar una solución segura y no almacenar secretos en manifests.
+No incluir claves privadas, contraseñas ni tokens. Secretos mediante archivos protegidos o variables de entorno. Los secretos de cada instancia viven en el servidor (`instances/<inst>/`), gestionados por `deltactl`.
 
 ## 6. Formato de artefacto
 
-Cada ejecución crea un release con identificador único basado en Git commit y timestamp (evitar depender solo del tag mutable).
+Cada ejecución crea un release con identificador único basado en commit Git y timestamp.
 
 ```text
 dist/
   <release-id>/
     images/
       backend.tar.gz
-      frontend.tar.gz
     manifest.json
     checksums.sha256
-    compose.yaml
     metadata.json
 ```
 
-`metadata.json` incluye:
-- nombre de proyecto
-- release ID
-- commit SHA
-- fecha UTC
-- versión de FORGE
-- lista de imágenes, tags y digest/checksum
-- archivos Compose incluidos
+`metadata.json`: proyecto, release ID, commit SHA, fecha UTC, versión de FORGE, imágenes (nombre, tag, servicio, checksum) e instancia destino.
 
-El agente remoto valida checksums antes de importar cualquier imagen. Artefactos incompletos no se despliegan.
+El servidor valida los checksums con `sha256sum -c` antes de cargar cualquier imagen. Un artefacto incompleto no se carga.
 
-## 7. Flujo de build y deploy
+## 7. Flujo de deploy
 
-1. Encontrar y cargar `forge.yaml` en el directorio actual.
-2. Validar configuración, herramientas requeridas, Docker daemon y archivos.
-3. Obtener commit SHA y comprobar estado Git; advertir o bloquear cambios no commitados según configuración.
-4. Generar release ID inmutable.
-5. Construir imágenes con tags inmutables: `<image>:<release-id>`.
-6. Ejecutar tests configurados (v1: comandos de test configurables; sin shell eval, usar argv).
-7. Exportar imágenes.
-8. Comprimir y crear manifiesto/checksums.
-9. Transferir a staging remoto mediante SSH/VPN.
-10. Validar checksum y metadata remotamente.
-11. Importar imágenes (`docker load` o método OCI elegido).
-12. Preparar directorio de release y compose con tags exactos.
-13. Ejecutar Compose con validación previa (`docker compose config`) y actualizar servicios.
-14. Esperar healthchecks con timeout.
-15. Si pasa: marcar release como activo y guardar historial.
-16. Si falla: volver a compose/images del release anterior; comprobar salud del rollback y reportar resultado.
-17. Aplicar retención de artefactos/releases, sin borrar volúmenes ni datos persistentes.
+1. Cargar `forge.yaml` y validar configuración, herramientas y Docker daemon.
+2. Obtener commit SHA y comprobar estado Git (bloquear o avisar por cambios sin commitear).
+3. Generar release ID inmutable.
+4. Construir imágenes con tag `<image>:<release-id>`.
+5. Ejecutar los tests configurados (argv).
+6. Exportar y comprimir imágenes; crear manifest y checksums.
+7. Transferir al staging remoto por SSH/SFTP.
+8. Validar checksums en el servidor (`sha256sum -c`).
+9. `deltactl load <archivo>` por cada imagen.
+10. `deltactl env <inst> set <S?_TAG> <release-id>`.
+11. `deltactl check <inst> [servicio]`; si falla, se detiene sin cambiar nada más.
+12. `deltactl deploy <inst> [servicio]`: levanta y espera a `healthy`.
+13. Si `deploy` falla: `deltactl rollback <inst> [servicio] --yes` y se informa el resultado.
+14. Registrar el release en el historial local y aplicar retención.
 
-## 8. Agente remoto
+## 8. Ejecutor remoto (sustituye a `forge-agent`)
 
-El programa Go `forge-agent` se instala en producción y se ejecuta como servicio systemd.
+FORGE solo ejecuta por SSH una **lista cerrada** de comandos, construidos con argv:
 
-Responsabilidades:
-- Recibir solicitudes autenticadas.
-- Limitar acceso al usuario de despliegue y a la VPN.
-- Recibir artefactos en staging.
-- Validar paths (prevenir path traversal), tamaño, checksum, metadata y releases.
-- Aplicar despliegue mediante Docker/Compose.
-- Mantener historial de releases y estado.
-- Ejecutar healthchecks y rollback.
-- Proporcionar status y logs.
+- `sha256sum -c checksums.sha256` dentro del staging del release.
+- `deltactl load | env set | check | deploy | rollback | status | runs | images | doctor`.
 
-**Seguridad v1:** SSH con claves dedicadas; no aceptar comandos arbitrarios; comandos remotos permitidos explícitamente; permisos mínimos; firewall restringido a la interfaz VPN; límites de tamaño y espacio; evitar extraer archivos tar sin validar rutas; registrar operaciones.
+Reglas:
+- Se valida cada argumento (instancia, servicio, variable, release-id) con listas de caracteres permitidos antes de enviarlo.
+- Ninguna cadena se concatena en un shell remoto.
+- Se rechazan rutas absolutas o con `..` provenientes del manifest.
+- Verificación del host SSH siempre activa.
+- Límites de tamaño del artefacto y comprobación de espacio libre antes de transferir.
+- Los secretos nunca pasan por FORGE.
+
+**Seguridad en el servidor (a documentar):** usuario dedicado con clave dedicada; si el usuario pertenece al grupo `docker` equivale a root, así que se documenta y se recomienda restringir el acceso a la interfaz VPN.
 
 ## 9. Rollback
 
-Guardar por release:
-- Compose file renderizado y validado.
-- Tags/digests de imágenes.
-- Metadata.
-- Resultado de healthchecks.
-- Hora y commit.
+Lo ejecuta `deltactl rollback`, que usa las etiquetas previas guardadas por `deploy`. FORGE:
+1. Lanza `deltactl rollback <inst> [servicio] --yes`.
+2. Comprueba el código de salida y consulta `deltactl status`.
+3. Registra el evento en el historial local.
 
-Rollback:
-1. Seleccionar release conocido.
-2. Validar que sus artefactos/imágenes siguen disponibles.
-3. Restaurar configuración Compose.
-4. Reaplicar Compose.
-5. Verificar salud.
-6. Registrar evento.
-
-Rollback de aplicación **no** significa rollback de MongoDB ni de otros datos persistentes. Migraciones de DB deben tener estrategia compatible hacia atrás y backups aparte.
+Limitaciones heredadas: exige que la imagen previa siga cargada (la retención de FORGE nunca borra imágenes del servidor) y **no deshace cambios en MongoDB** ni en otros datos.
 
 ## 10. Health checks
 
-La v1 soporta:
-- Estado de contenedores.
-- Health status Docker cuando se define `HEALTHCHECK`.
-- HTTP/HTTPS a endpoints configurados, preferentemente por red privada.
-- Timeout global y reintentos.
-- Resultado claro en logs.
-
-No declarar deploy exitoso únicamente porque `docker compose up` terminó con exit code 0.
+Los hace `deltactl deploy` (espera a `healthy`). FORGE no declara éxito si `deploy` termina con código distinto de cero; además consulta `deltactl status` al final y lo muestra.
 
 ## 11. Layout del repositorio FORGE
 
 ```text
 forge/
 ├── cmd/forge/                 # Entrypoint CLI
-├── cmd/forge-agent/           # Entrypoint remoto
 ├── internal/
+│   ├── cli/                   # despachador de subcomandos
 │   ├── config/
-│   ├── project/
-│   ├── git/
+│   ├── gitmeta/
+│   ├── release/               # release-id e historial local
 │   ├── build/
-│   ├── artifact/
-│   ├── transport/
+│   ├── artifact/              # export, manifest, checksums
+│   ├── transport/             # ssh/sftp
+│   ├── remote/                # ejecutor de deltactl (lista cerrada)
 │   ├── deploy/
-│   ├── health/
-│   ├── release/
-│   ├── rollback/
-│   ├── agent/
-│   ├── state/
+│   ├── doctor/
+│   ├── execx/                 # exec.CommandContext con argv
 │   └── logging/
-├── pkg/                       # APIs reutilizables solo si necesario
-├── configs/
 ├── docs/
 ├── examples/
-│   └── itc-deploy/
 ├── go.mod
 ├── Makefile
 ├── README.md
@@ -273,133 +238,97 @@ forge/
 
 ## 12. Milestones
 
-### M0 — Diseño y seguridad
-- Definir schema `forge.yaml`.
-- Elegir mecanismo SSH/agent.
-- Documentar threat model.
-- Definir releases y manifiesto.
+### M0 — Diseño y bootstrap
+- Esquema `forge.yaml`, frontera con `itc-deploy`, release y manifiesto.
+- Módulo Go, estructura, Makefile.
 
 ### M1 — CLI local
-- Crear Go module.
-- Implementar `forge init`, `config validate`, `doctor`, `version`.
-- Resolver project root y config.
-- Logs y errores estructurados.
+- `forge init`, `config validate`, `doctor` (local), `version`.
+- Resolver root del proyecto y config; logs y errores estructurados.
 
-**Exit criteria:** ejecutable desde cualquier subdirectorio del proyecto; encuentra configuración y valida.
+**Exit criteria:** ejecutable desde cualquier subdirectorio del proyecto; encuentra y valida la configuración.
 
 ### M2 — Build
-- Construir imagen(es) configuradas.
-- Tags por commit/release.
-- Tests.
-- Capturar logs/exit codes.
-- Implementar `forge build`.
+- `forge build` con tags por release-id, tests, logs y códigos de salida.
 
-**Exit criteria:** build reproducible y errores visibles; sin shell scripts como orquestadores.
+**Exit criteria:** build reproducible y errores visibles; sin shell.
 
 ### M3 — Packaging
-- Export de imágenes.
-- Comprimir.
-- Crear manifest y SHA-256.
-- Implementar `forge package`.
+- `docker save` + gzip, manifest y SHA-256. `forge package`.
 
-**Exit criteria:** artefacto verificable, metadata completa.
+**Exit criteria:** artefacto verificable con metadata completa.
 
 ### M4 — VPN/SSH transport
-- Configurar conectividad VPN fuera de FORGE.
-- SSH con key dedicada y known_hosts verificado.
-- Transferencia al staging.
-- Implementar `forge transfer` y `forge doctor`.
+- `ssh`/`sftp` con `known_hosts` verificado, staging remoto, `sha256sum -c` remoto.
+- `forge transfer` y comprobaciones de transporte en `forge doctor`.
 
-**Exit criteria:** transferencia autenticada y checksum validado.
+**Exit criteria:** transferencia autenticada y checksum validado en el servidor.
 
-### M5 — Agent y deploy
-- Implementar `forge-agent`.
-- Instalar servicio systemd.
-- Validar Compose.
-- Importar imágenes.
-- Ejecutar deploy y healthcheck.
-- Guardar release.
+### M5 — Ejecutor remoto de deltactl
+- Lista cerrada de comandos y validación de argumentos.
+- `load`, `env set`, `check`, `deploy` y `forge deploy` completo.
 
-**Exit criteria:** deploy end-to-end en servidor de pruebas.
+**Exit criteria:** deploy de extremo a extremo contra un servidor de pruebas.
 
-### M6 — Rollback
-- Persistir release activo/anterior.
-- Rollback por ID.
-- Healthcheck del rollback.
-- Retención de releases.
+### M6 — Rollback y registro
+- Rollback automático ante fallo de `deploy` y `forge rollback`.
+- `forge status` y `forge releases` (historial local) y retención local.
 
-**Exit criteria:** provocar fallo de healthcheck y restaurar release anterior automáticamente.
+**Exit criteria:** provocar un fallo y volver a la versión anterior vía `deltactl rollback`.
 
-### M7 — Proyecto piloto
-- Integrar `itc-deploy`.
-- Revisar Compose, imágenes, variables y volúmenes.
-- Deploy primero en ventana controlada.
+### M7 — Proyecto piloto (posterior, con autorización)
+- Una instancia real de `itc-deploy` (backend `s0` o `s1`) en ventana controlada.
 - Documentar procedimiento y recuperación.
 
 ### M8 — CI server (opcional posterior)
-- Servidor dedicado.
-- Repositorios bare o webhook privado.
-- Worker que ejecute FORGE en workspace aislado.
-- Pipeline automático al push.
+- Servidor dedicado, workspace aislado, pipeline por webhook o Git hook.
 - No mezclar secretos de producción con jobs de build.
-- Aislar jobs (contenedores/usuario sin privilegios cuando sea posible).
 
 ## 13. Testing
 
-- Unit tests para config, IDs, manifests, checksum, path validation y retención.
-- Tests de integración con Docker.
-- Tests de transporte en entorno VPN.
-- Tests del agente con artefactos corruptos, paths maliciosos y releases inválidos.
-- Tests de deploy/rollback en proyecto de prueba.
-- Simular: host desconectado, falta de espacio, checksum inválido, build fallido, container unhealthy, SSH rechazado y rollback fallido.
+- Unit tests: config, release-id, manifests, checksums, validación de rutas y argumentos, retención.
+- El ejecutor remoto y Docker se prueban con **dobles de prueba** (como el `fake-docker` de `itc-deploy`); ningún test toca servidores ni Docker reales.
+- Simular: servidor desconectado, falta de espacio, checksum inválido, build fallido, `check` fallido, `deploy` fallido, SSH rechazado y `rollback` fallido.
+- Las pruebas contra Docker o servidores reales son manuales y requieren autorización.
 
 ## 14. Operación y observabilidad
 
-- Logs con timestamps y niveles.
-- ID de ejecución en todos los logs.
-- Registro local de releases.
+- Logs con timestamps, niveles e ID de ejecución.
+- Historial local de releases.
 - Salida terminal amigable y JSON.
 - Código de salida distinto de cero ante errores.
 - `forge status`, `forge releases`, `forge doctor`.
-- Logs remotos limitados y consultables.
+- Si `deltactl runs` indica una operación interrumpida, `forge doctor` lo avisa; FORGE nunca ejecuta `runs resolve` por su cuenta.
 
 ## 15. Reglas que no se deben romper
 
 1. No ejecutar comandos shell construidos concatenando strings; usar `exec.CommandContext` con argv.
 2. No aceptar path arbitrario desde manifest/artefactos.
 3. No desactivar verificación de host SSH.
-4. No exponer agent a Internet; limitar a VPN.
+4. No exponer nada a Internet; limitar a VPN.
 5. No incluir secretos en logs, artefactos ni Git.
-6. No borrar ni recrear volúmenes persistentes en deploy/rollback.
-7. No usar tags mutable `latest` como única identidad de release.
-8. No desplegar artefactos sin checksum y metadata validada.
-9. No declarar éxito sin healthcheck.
-10. Mantener el release previo disponible hasta que el nuevo sea healthy.
+6. No borrar ni recrear volúmenes persistentes.
+7. No usar el tag mutable `latest` como identidad de release.
+8. No cargar artefactos sin checksum y metadata validados.
+9. No declarar éxito si `deltactl deploy` falla.
+10. No borrar imágenes del servidor (`docker image prune -a`): sin ellas no hay rollback.
+11. No modificar `itc-deploy` desde este repo; los cambios que haga falta pedirle se tratan aparte.
 
 ## 16. Definición de FORGE 1.0 terminado
 
-FORGE 1.0 se considera listo cuando, desde la raíz de un proyecto configurado, el usuario puede ejecutar:
-
-```bash
-forge deploy
-```
-
-Y FORGE:
+Desde la raíz de un proyecto configurado, `forge deploy`:
 - valida la configuración,
 - identifica el commit,
 - ejecuta tests,
 - construye las imágenes,
 - empaqueta y verifica los artefactos,
-- transfiere por VPN/SSH,
-- despliega remotamente,
-- valida salud,
-- guarda release,
-- y realiza rollback automático si el deploy falla.
-
-Todo el flujo es implementado en Go, sin scripts Bash de deployment como lógica central.
+- transfiere por VPN/SSH y valida el checksum en el servidor,
+- carga, valida y despliega con `deltactl`,
+- informa la salud según `deltactl`,
+- y vuelve a la versión anterior con `deltactl rollback` si el despliegue falla.
 
 ---
 
 ## Próximo paso práctico
 
-Comenzar M0/M1: crear el repositorio `forge`, definir `forge.yaml`, inicializar el módulo Go y construir la CLI con `forge init`, `forge config validate` y `forge doctor`. No modificar todavía el servidor de producción hasta que el diseño del agente y permisos esté revisado.
+Implementar M0–M6 por ramas desde `develop`. No tocar el servidor de producción ni `itc-deploy` hasta revisar el diseño del ejecutor remoto y sus permisos.
