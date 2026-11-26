@@ -6,9 +6,11 @@ project:
   name: auth-backend
 
 build:
+  docker: auto                 # auto, native or wsl (Docker inside WSL, Windows only); auto tries native first
+  # wsl_distro: Ubuntu         # optional: WSL distribution that has Docker (default: your default one)
   images:
     - name: backend
-      service: s0              # deltactl service key (s0 = auth-backend, s1 = gueo-back-end)
+      service: s0              # deltactl service key (s0 = auth-backend, s1 = gueo-back-end); only needed with deployment
       context: .
       dockerfile: Dockerfile
       image: auth-backend      # must match S0_IMAGE of the deltactl instance
@@ -16,6 +18,12 @@ build:
   tests:
     - ["npm", "test"]          # argv, never a shell line
 
+upload:
+  target: mpa                  # ssh alias from ~/.ssh/config (or user@host); `forge ship` copies the release here with scp
+  remote_dir: images           # folder on the server, relative to your home there; it must already exist
+
+# Optional: only used by `forge deploy`, `rollback` and `status` (deltactl on the server).
+# If you only upload images, delete this whole section.
 deployment:
   host: 10.20.0.2              # private WireGuard IP of the production host
   user: forge-deploy

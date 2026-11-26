@@ -34,6 +34,8 @@ func (a *App) cmdDoctor(ctx context.Context, args []string) int {
 			checks = append(checks, doctor.Check{Name: "ssh-connect", Status: doctor.Fail, Detail: "skipped: no valid configuration"})
 		case len(cfg.Validate()) > 0:
 			checks = append(checks, doctor.Check{Name: "ssh-connect", Status: doctor.Fail, Detail: "skipped: invalid configuration"})
+		case !cfg.Deployment.Configured():
+			checks = append(checks, doctor.Check{Name: "ssh-connect", Status: doctor.Warn, Detail: "skipped: no deployment section (nothing runs on the server)"})
 		default:
 			log := logging.New(a.Stderr, *asJSON, *verbose, logging.NewRunID())
 			checks = append(checks, doctor.RunRemote(ctx, a.sshClient(cfg, log), cfg.Deployment)...)

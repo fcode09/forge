@@ -113,8 +113,17 @@ func (a *App) buildRelease(ctx context.Context, cfg *config.Config, projectDir s
 	if o.asJSON {
 		b.Out = a.Stderr // keep stdout valid JSON
 	}
+	if !o.dryRun {
+		engine, err := a.dockerEngine(ctx, cfg, log)
+		if err != nil {
+			fmt.Fprintln(a.Stderr, "forge build:", err)
+			return nil, g, ExitError
+		}
+		b.RunnerIn = engine.RunnerIn(a.RunnerIn)
+	}
 	res, err := b.Run(ctx, cfg, build.Options{
 		ProjectDir: projectDir, ReleaseID: id, Commit: g.Commit, SkipTests: o.skipTests, DryRun: o.dryRun,
+		DaemonChecked: !o.dryRun,
 	})
 	if err != nil {
 		fmt.Fprintln(a.Stderr, "forge build:", err)

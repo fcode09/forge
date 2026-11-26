@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/fcode09/forge/internal/dockerx"
 )
 
 // FileName is the name of the project configuration file.
@@ -26,6 +28,7 @@ type Config struct {
 	Version    int        `yaml:"version"`
 	Project    Project    `yaml:"project"`
 	Build      Build      `yaml:"build"`
+	Upload     Upload     `yaml:"upload"`
 	Deployment Deployment `yaml:"deployment"`
 	Retention  Retention  `yaml:"retention"`
 }
@@ -37,8 +40,12 @@ type Project struct {
 
 // Build lists the images to build and the tests to run first.
 type Build struct {
-	Images []Image    `yaml:"images"`
-	Tests  [][]string `yaml:"tests"`
+	// Docker selects where the Docker CLI runs: auto (default), native or wsl (Docker inside WSL, Windows only).
+	Docker string `yaml:"docker"`
+	// WSLDistro names the WSL distribution that has Docker; empty means the default distribution.
+	WSLDistro string     `yaml:"wsl_distro"`
+	Images    []Image    `yaml:"images"`
+	Tests     [][]string `yaml:"tests"`
 }
 
 // Image is one image built from one Dockerfile and mapped to one deltactl service.
@@ -63,6 +70,25 @@ type Deployment struct {
 	Instance     string `yaml:"instance"`
 }
 
+// Configured reports whether the deployment section is in use. It is optional: a project that only uploads
+// its images with `forge ship` has none, and then deltactl is never involved.
+func (d Deployment) Configured() bool {
+	return d.Host != "" || d.User != "" || d.Instance != "" || d.DeltactlPath != "" || d.SSHKey != ""
+}
+
+// Upload is where `forge ship` copies a release: a directory in the home of an ssh login.
+type Upload struct {
+	// Target is an ssh alias from ~/.ssh/config, a host name, or user@host. ssh decides user, port, key and
+	// how to authenticate, so a password prompt works.
+	Target string `yaml:"target"`
+	// RemoteDir is the directory that receives <release-id>/ on the server. Relative paths start at the home
+	// of the remote user. It must already exist: FORGE runs nothing on the server.
+	RemoteDir string `yaml:"remote_dir"`
+}
+
+// HasUpload reports whether an upload target is configured.
+func (c *Config) HasUpload() bool { return c.Upload.Target != "" }
+
 // Retention controls how many local releases are kept.
 type Retention struct {
 	Releases int `yaml:"releases"`
@@ -74,6 +100,7 @@ const (
 	DefaultKnownHosts = "~/.ssh/known_hosts"
 	DefaultRemoteDir  = "/srv/forge"
 	DefaultRetention  = 5
+	DefaultUploadDir  = "images"
 )
 
 var (
@@ -85,6 +112,9 @@ var (
 	hostRe        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:-]*$`)
 	userRe        = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 	instanceRe    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+	distroRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	uploadHostRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	uploadDirRe   = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
 )
 
 // Parse decodes forge.yaml content strictly (unknown fields are errors) and applies defaults.
@@ -124,6 +154,9 @@ func (c *Config) applyDefaults() {
 	if c.Retention.Releases == 0 {
 		c.Retention.Releases = DefaultRetention
 	}
+	if c.Upload.Target != "" && c.Upload.RemoteDir == "" {
+		c.Upload.RemoteDir = DefaultUploadDir
+	}
 	for i := range c.Build.Images {
 		im := &c.Build.Images[i]
 		if im.Context == "" {
@@ -149,6 +182,12 @@ func (c *Config) Validate() []string {
 		add("project.name", "required; lowercase letters, digits, '.', '_' and '-', starting with a letter or digit")
 	}
 
+	if !dockerx.Valid(c.Build.Docker) {
+		add("build.docker", "must be auto, native or wsl, got %q", c.Build.Docker)
+	}
+	if c.Build.WSLDistro != "" && !distroRe.MatchString(c.Build.WSLDistro) {
+		add("build.wsl_distro", "must be a WSL distribution name (letters, digits, '.', '_', '-'), got %q", c.Build.WSLDistro)
+	}
 	if len(c.Build.Images) == 0 {
 		add("build.images", "at least one image is required")
 	}
@@ -161,9 +200,12 @@ func (c *Config) Validate() []string {
 			add(p+".name", "duplicate name %q", im.Name)
 		}
 		names[im.Name] = true
-		if !serviceRe.MatchString(im.Service) {
+		// The deltactl service key only matters when the deployment section is in use.
+		switch {
+		case im.Service == "" && !c.Deployment.Configured():
+		case !serviceRe.MatchString(im.Service):
 			add(p+".service", "must be a deltactl service key such as s0 or s1, got %q", im.Service)
-		} else if services[im.Service] {
+		case services[im.Service]:
 			add(p+".service", "duplicate service %q", im.Service)
 		}
 		services[im.Service] = true
@@ -189,6 +231,41 @@ func (c *Config) Validate() []string {
 		}
 	}
 
+	if c.Deployment.Configured() {
+		c.validateDeployment(add)
+	}
+	c.validateUpload(add)
+	if !c.Deployment.Configured() && !c.HasUpload() {
+		add("upload", "set upload.target to send images with `forge ship`, or fill in the deployment section to deploy with deltactl")
+	}
+	if c.Retention.Releases < 1 {
+		add("retention.releases", "must be at least 1, got %d", c.Retention.Releases)
+	}
+	return errs
+}
+
+func (c *Config) validateUpload(add func(field, msg string, a ...any)) {
+	u := c.Upload
+	if u.Target == "" {
+		if u.RemoteDir != "" {
+			add("upload.target", "required when upload.remote_dir is set")
+		}
+		return
+	}
+	if !uploadHostRe.MatchString(u.Target) {
+		add("upload.target", "must be an ssh alias, a host name or user@host, without ':' or spaces (got %q)", u.Target)
+	}
+	switch {
+	case !uploadDirRe.MatchString(u.RemoteDir):
+		add("upload.remote_dir", "letters, digits, '.', '_', '-' and '/' only, relative to the remote home or absolute (got %q)", u.RemoteDir)
+	case path.Clean(u.RemoteDir) != u.RemoteDir || u.RemoteDir == "." || u.RemoteDir == "/":
+		add("upload.remote_dir", "must be a clean path to a directory, without '..' or a trailing '/' (got %q)", u.RemoteDir)
+	case strings.Contains(u.RemoteDir, ".."):
+		add("upload.remote_dir", "must not contain '..' (got %q)", u.RemoteDir)
+	}
+}
+
+func (c *Config) validateDeployment(add func(field, msg string, a ...any)) {
 	d := c.Deployment
 	if !hostRe.MatchString(d.Host) {
 		add("deployment.host", "required; a host name or IP address (got %q)", d.Host)
@@ -219,10 +296,6 @@ func (c *Config) Validate() []string {
 	if strings.TrimSpace(d.KnownHosts) == "" {
 		add("deployment.known_hosts", "must not be empty: SSH host verification cannot be disabled")
 	}
-	if c.Retention.Releases < 1 {
-		add("retention.releases", "must be at least 1, got %d", c.Retention.Releases)
-	}
-	return errs
 }
 
 // ImageTag returns the immutable reference <image>:<releaseID> for an image.
@@ -278,4 +351,12 @@ func FindFile(start string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// ValidUploadTarget reports whether s is a safe upload.target: an ssh alias, host name or user@host.
+func ValidUploadTarget(s string) bool { return uploadHostRe.MatchString(s) }
+
+// ValidUploadDir reports whether s is a safe upload.remote_dir.
+func ValidUploadDir(s string) bool {
+	return uploadDirRe.MatchString(s) && path.Clean(s) == s && s != "." && s != "/" && !strings.Contains(s, "..")
 }

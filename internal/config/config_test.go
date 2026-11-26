@@ -130,3 +130,108 @@ func TestImageTagAndReleaseLabel(t *testing.T) {
 		t.Fatal("good label rejected")
 	}
 }
+
+func TestBuildDockerSettings(t *testing.T) {
+	c := valid(t)
+	for _, ok := range []string{"", "auto", "native", "wsl"} {
+		c.Build.Docker = ok
+		if errs := c.Validate(); len(errs) != 0 {
+			t.Fatalf("build.docker=%q rejected: %v", ok, errs)
+		}
+	}
+	c.Build.Docker = "podman"
+	if errs := c.Validate(); len(errs) != 1 || !strings.HasPrefix(errs[0], "build.docker:") {
+		t.Fatalf("errs=%v", errs)
+	}
+	c.Build.Docker, c.Build.WSLDistro = "wsl", "Ubuntu-26.04"
+	if errs := c.Validate(); len(errs) != 0 {
+		t.Fatalf("distro rejected: %v", errs)
+	}
+	c.Build.WSLDistro = "Ubuntu; rm -rf"
+	if errs := c.Validate(); len(errs) != 1 || !strings.HasPrefix(errs[0], "build.wsl_distro:") {
+		t.Fatalf("errs=%v", errs)
+	}
+}
+
+func TestUploadOnlyConfigIsValid(t *testing.T) {
+	c, err := Parse(strings.NewReader(`version: 1
+project: {name: app}
+build:
+  images:
+    - {name: backend, image: app}
+upload:
+  target: mpa
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := c.Validate(); len(errs) != 0 {
+		t.Fatalf("upload-only config rejected: %v", errs)
+	}
+	if c.Upload.RemoteDir != DefaultUploadDir || c.Deployment.Configured() || !c.HasUpload() {
+		t.Fatalf("defaults: %+v", c.Upload)
+	}
+}
+
+func TestNeedsUploadOrDeployment(t *testing.T) {
+	c := valid(t)
+	c.Upload, c.Deployment = Upload{}, Deployment{}
+	errs := c.Validate()
+	if len(errs) != 1 || !strings.HasPrefix(errs[0], "upload:") {
+		t.Fatalf("errs=%v", errs)
+	}
+}
+
+func TestServiceRequiredOnlyWithDeployment(t *testing.T) {
+	c := valid(t)
+	c.Build.Images[0].Service = ""
+	if errs := c.Validate(); len(errs) == 0 || !strings.HasPrefix(errs[0], "build.images[0].service:") {
+		t.Fatalf("with deployment the service is required: %v", errs)
+	}
+	c.Deployment = Deployment{}
+	if errs := c.Validate(); len(errs) != 0 {
+		t.Fatalf("without deployment the service is optional: %v", errs)
+	}
+}
+
+func TestUploadRejects(t *testing.T) {
+	cases := map[string]func(*Config){
+		"upload.target":        func(c *Config) { c.Upload.Target = "-oProxyCommand=x" },
+		"upload.target ":       func(c *Config) { c.Upload.Target = "host:path" },
+		"upload.remote_dir":    func(c *Config) { c.Upload.RemoteDir = "../etc" },
+		"upload.remote_dir ":   func(c *Config) { c.Upload.RemoteDir = "images/" },
+		"upload.remote_dir  ":  func(c *Config) { c.Upload.RemoteDir = "~/images" },
+		"upload.remote_dir   ": func(c *Config) { c.Upload.RemoteDir = "my images" },
+	}
+	for name, mutate := range cases {
+		c := valid(t)
+		mutate(c)
+		field := strings.TrimSpace(name)
+		found := false
+		for _, e := range c.Validate() {
+			found = found || strings.HasPrefix(e, field+":")
+		}
+		if !found {
+			t.Errorf("%q: expected an error, got %v", name, c.Validate())
+		}
+	}
+	c := valid(t)
+	c.Upload = Upload{RemoteDir: "images"}
+	if errs := c.Validate(); len(errs) == 0 || !strings.HasPrefix(errs[len(errs)-1], "upload.target:") {
+		t.Fatalf("remote_dir without target: %v", errs)
+	}
+	for _, ok := range []string{"mpa", "user@mpa", "10.0.0.5", "srv.example.com"} {
+		c := valid(t)
+		c.Upload.Target = ok
+		if errs := c.Validate(); len(errs) != 0 {
+			t.Errorf("target %q rejected: %v", ok, errs)
+		}
+	}
+	for _, ok := range []string{"images", "/home/u/images", "a/b.c"} {
+		c := valid(t)
+		c.Upload.RemoteDir = ok
+		if errs := c.Validate(); len(errs) != 0 {
+			t.Errorf("remote_dir %q rejected: %v", ok, errs)
+		}
+	}
+}

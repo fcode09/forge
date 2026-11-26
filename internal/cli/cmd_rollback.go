@@ -26,6 +26,9 @@ func (a *App) cmdRollback(ctx context.Context, args []string) int {
 	if code != ExitOK {
 		return code
 	}
+	if !a.needDeployment("rollback", cfg) {
+		return ExitError
+	}
 	projectDir := filepath.Dir(path)
 	cfg = onlyService(cfg, *service)
 	var services []string

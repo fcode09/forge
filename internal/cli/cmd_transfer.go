@@ -32,6 +32,9 @@ func (a *App) cmdTransfer(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.Stderr, "forge transfer: %s is invalid\n%s\n", path, joinLines(errs))
 		return ExitError
 	}
+	if !a.needDeployment("transfer", cfg) {
+		return ExitError
+	}
 	projectDir := filepath.Dir(path)
 
 	id := *rel
