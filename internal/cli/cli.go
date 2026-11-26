@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/fcode09/forge/internal/config"
 	"github.com/fcode09/forge/internal/execx"
+	"github.com/fcode09/forge/internal/transport"
 	"github.com/fcode09/forge/internal/version"
 )
 
@@ -35,7 +37,9 @@ type App struct {
 	RunnerIn func(dir string) execx.Runner
 	// Streamer carries large outputs (docker save) to disk without buffering them.
 	Streamer execx.Streamer
-	Now      func() time.Time
+	// Exec runs the ssh binary (with stdin for uploads).
+	Exec execx.StdinRunner
+	Now  func() time.Time
 }
 
 // command is one top-level subcommand.
@@ -46,12 +50,13 @@ type command struct {
 
 func (a *App) commands() map[string]command {
 	return map[string]command{
-		"build":   {"Build the declared images and run the tests", (*App).cmdBuild},
-		"init":    {"Create a forge.yaml example", (*App).cmdInit},
-		"package": {"Export images and write manifest and checksums", (*App).cmdPackage},
-		"config":  {"Configuration tools (config validate)", (*App).cmdConfig},
-		"doctor":  {"Diagnose Docker, SSH and the configuration", (*App).cmdDoctor},
-		"version": {"Show the FORGE version", (*App).cmdVersion},
+		"build":    {"Build the declared images and run the tests", (*App).cmdBuild},
+		"init":     {"Create a forge.yaml example", (*App).cmdInit},
+		"package":  {"Export images and write manifest and checksums", (*App).cmdPackage},
+		"config":   {"Configuration tools (config validate)", (*App).cmdConfig},
+		"doctor":   {"Diagnose Docker, SSH and the configuration", (*App).cmdDoctor},
+		"transfer": {"Upload a packaged release to the host and verify it", (*App).cmdTransfer},
+		"version":  {"Show the FORGE version", (*App).cmdVersion},
 	}
 }
 
@@ -117,6 +122,17 @@ func (a *App) loadConfig(explicit string) (path string, cfg *config.Config, err 
 	}
 	cfg, err = config.Load(path)
 	return path, cfg, err
+}
+
+// sshClient builds the transport client for a configuration.
+func (a *App) sshClient(cfg *config.Config, log *slog.Logger) *transport.Client {
+	d := cfg.Deployment
+	return &transport.Client{
+		Target:  transport.Target{Host: d.Host, User: d.User, Port: d.SSHPort, KnownHosts: d.KnownHosts, SSHKey: d.SSHKey},
+		Exec:    a.Exec,
+		Log:     log,
+		HomeDir: a.HomeDir,
+	}
 }
 
 func joinLines(lines []string) string { return strings.Join(lines, "\n") }

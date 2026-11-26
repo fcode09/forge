@@ -24,6 +24,7 @@ func main() {
 		HomeDir:  os.UserHomeDir,
 		Now:      time.Now,
 		Streamer: execx.Exec{},
+		Exec:     execx.Exec{},
 		RunnerIn: func(dir string) execx.Runner {
 			// Build and test output goes to stderr so stdout stays clean for --json.
 			return execx.Exec{Options: execx.Options{Dir: dir, Stdout: os.Stderr, Stderr: os.Stderr}}
