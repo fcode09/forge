@@ -15,7 +15,7 @@ build:
       context: .
       dockerfile: Dockerfile
       image: auth-backend      # must match S0_IMAGE of the deltactl instance
-      target: production
+      # target: production      # optional: name of the Dockerfile stage to build (default: the last stage)
   tests:
     - ["npm", "test"]          # argv, never a shell line
 

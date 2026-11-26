@@ -57,6 +57,7 @@ func setup(t *testing.T, fail func([]string) (execx.Result, error)) (*Builder, *
 
 func TestRunBuildsThenTests(t *testing.T) {
 	b, calls, _, root, cfg := setup(t, nil)
+	cfg.Build.Images[0].Target = "production" // the template leaves the stage unset: --target must appear only when asked for
 	res, err := b.Run(context.Background(), cfg, Options{ProjectDir: root, ReleaseID: "20261125T000000Z-abc1234", Commit: "abc1234"})
 	if err != nil {
 		t.Fatal(err)
@@ -180,5 +181,19 @@ func TestInvalidConfigRejected(t *testing.T) {
 func TestQuote(t *testing.T) {
 	if quote("a b") != "'a b'" || quote("plain-1.0") != "plain-1.0" || quote("it's") != `'it'\''s'` || quote("") != "''" {
 		t.Fatal("bad quoting")
+	}
+}
+
+func TestNoTargetFlagWhenStageIsUnset(t *testing.T) {
+	_, _, _, root, cfg := setup(t, nil)
+	cfg.Build.Images[0].Target = ""
+	argv, err := buildArgs(Options{ProjectDir: root, ReleaseID: "r1"}, cfg.Build.Images[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range argv {
+		if a == "--target" {
+			t.Fatalf("--target must not be passed when image.target is empty: %v", argv)
+		}
 	}
 }
