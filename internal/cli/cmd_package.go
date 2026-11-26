@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/fcode09/forge/internal/artifact"
+	"github.com/fcode09/forge/internal/config"
 	"github.com/fcode09/forge/internal/logging"
 	"github.com/fcode09/forge/internal/release"
 	"github.com/fcode09/forge/internal/version"
@@ -60,14 +61,9 @@ func (a *App) cmdPackage(ctx context.Context, args []string) int {
 	if outRoot == "" {
 		outRoot = filepath.Join(projectDir, "dist")
 	}
-	p := &artifact.Packager{
-		Run: a.Runner, Stream: a.Streamer, Now: a.Now, ForgeVersion: version.Version,
-		Log: logging.New(a.Stderr, *asJSON, *verbose, logging.NewRunID()),
-	}
-	dir, meta, err := p.Package(ctx, artifact.Input{Config: cfg, ReleaseID: last.ReleaseID, Commit: last.Commit, OutRoot: outRoot})
-	if err != nil {
-		fmt.Fprintln(a.Stderr, "forge package:", err)
-		return ExitError
+	dir, meta, code := a.packageRelease(ctx, cfg, last, outRoot, *verbose, *asJSON)
+	if code != ExitOK {
+		return code
 	}
 
 	if *asJSON {
@@ -83,4 +79,18 @@ func (a *App) cmdPackage(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.Stdout, "  %-8s %s  %d bytes  sha256:%s\n", im.Service, im.File, im.Size, im.SHA256)
 	}
 	return ExitOK
+}
+
+// packageRelease exports a built release into outRoot/<release-id>. On failure it prints the reason.
+func (a *App) packageRelease(ctx context.Context, cfg *config.Config, last release.Last, outRoot string, verbose, asJSON bool) (string, *artifact.Metadata, int) {
+	p := &artifact.Packager{
+		Run: a.Runner, Stream: a.Streamer, Now: a.Now, ForgeVersion: version.Version,
+		Log: logging.New(a.Stderr, asJSON, verbose, logging.NewRunID()),
+	}
+	dir, meta, err := p.Package(ctx, artifact.Input{Config: cfg, ReleaseID: last.ReleaseID, Commit: last.Commit, OutRoot: outRoot})
+	if err != nil {
+		fmt.Fprintln(a.Stderr, "forge package:", err)
+		return "", nil, ExitError
+	}
+	return dir, meta, ExitOK
 }

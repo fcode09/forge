@@ -11,6 +11,7 @@ import (
 type fakeRemote struct {
 	fail map[string]string // command prefix -> stderr
 	ran  []string
+	runs string // output of `deltactl runs list`
 }
 
 func (f *fakeRemote) Run(_ context.Context, argv ...string) (execx.Result, error) {
@@ -26,6 +27,9 @@ func (f *fakeRemote) Run(_ context.Context, argv ...string) (execx.Result, error
 		return execx.Result{Stdout: "h\n/dev/x 1000 1 2048 1% /srv\n"}, nil
 	case "env":
 		return execx.Result{Stdout: "sha256sum (GNU coreutils) 9.4\n"}, nil
+	}
+	if len(argv) > 1 && argv[1] == "runs" {
+		return execx.Result{Stdout: f.runs}, nil
 	}
 	return execx.Result{}, nil
 }
@@ -66,6 +70,22 @@ func TestRunRemoteIndividualFailures(t *testing.T) {
 	}
 	f := &fakeRemote{fail: map[string]string{"df": "x"}}
 	if c := byName(RunRemote(context.Background(), f, goodConfig(t).Deployment), "remote-space"); c.Status != Warn {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestRunRemoteWarnsAboutInterruptedRuns(t *testing.T) {
+	f := &fakeRemote{runs: `[{"id":"1","status":"interrumpida"}]`}
+	cs := RunRemote(context.Background(), f, goodConfig(t).Deployment)
+	if c := byName(cs, "deltactl-runs"); c.Status != Warn || Failed(cs) {
+		t.Fatalf("%+v", c)
+	}
+	f = &fakeRemote{runs: `[{"id":"1","status":"correcta"}]`}
+	if c := byName(RunRemote(context.Background(), f, goodConfig(t).Deployment), "deltactl-runs"); c.Status != OK {
+		t.Fatalf("%+v", c)
+	}
+	f = &fakeRemote{fail: map[string]string{"/srv/itc-deploy/deltactl runs": "x"}}
+	if c := byName(RunRemote(context.Background(), f, goodConfig(t).Deployment), "deltactl-runs"); c.Status != Warn {
 		t.Fatalf("%+v", c)
 	}
 }

@@ -27,8 +27,10 @@ type Target struct {
 
 // Client runs commands on the remote host over ssh.
 type Client struct {
-	Target  Target
-	Exec    execx.StdinRunner
+	Target Target
+	Exec   execx.StdinRunner
+	// Live, when set, is used by RunLive so long remote operations (deploy) stream their output as it happens.
+	Live    execx.StdinRunner
 	Log     *slog.Logger
 	HomeDir func() (string, error)
 }
@@ -121,8 +123,20 @@ func (c *Client) Run(ctx context.Context, argv ...string) (execx.Result, error) 
 	return c.RunStdin(ctx, nil, argv...)
 }
 
+// RunLive is Run with the remote output streamed to the terminal when a Live runner is configured.
+func (c *Client) RunLive(ctx context.Context, argv ...string) (execx.Result, error) {
+	return c.run(ctx, c.Live, nil, argv)
+}
+
 // RunStdin is Run with stdin streamed to the remote program.
 func (c *Client) RunStdin(ctx context.Context, stdin io.Reader, argv ...string) (execx.Result, error) {
+	return c.run(ctx, nil, stdin, argv)
+}
+
+func (c *Client) run(ctx context.Context, runner execx.StdinRunner, stdin io.Reader, argv []string) (execx.Result, error) {
+	if runner == nil {
+		runner = c.Exec
+	}
 	remote, err := RemoteCommand(argv)
 	if err != nil {
 		return execx.Result{}, err
@@ -132,7 +146,7 @@ func (c *Client) RunStdin(ctx context.Context, stdin io.Reader, argv ...string) 
 		return execx.Result{}, err
 	}
 	c.Log.Debug("ssh", "host", c.Target.Host, "command", remote)
-	return c.Exec.RunStdin(ctx, stdin, "ssh", args...)
+	return runner.RunStdin(ctx, stdin, "ssh", args...)
 }
 
 // UploadFile copies a local file to remotePath by streaming it into `dd` on the host.

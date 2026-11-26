@@ -38,6 +38,7 @@ func RunRemote(ctx context.Context, r RemoteRunner, d config.Deployment) []Check
 		out = append(out, Check{"deltactl", Fail, d.DeltactlPath + " is not an executable file" + failSuffix(res)})
 	} else {
 		out = append(out, Check{"deltactl", OK, d.DeltactlPath})
+		out = append(out, checkInterruptedRuns(ctx, r, d))
 	}
 	return out
 }
@@ -64,4 +65,19 @@ func failSuffix(r execx.Result) string {
 		return ": " + strings.SplitN(s, "\n", 2)[0]
 	}
 	return ""
+}
+
+// checkInterruptedRuns warns when deltactl lists an interrupted operation: until someone reviews it with
+// `deltactl runs resolve`, deltactl refuses every new operation. This is a text heuristic on the listing
+// (it only looks for the word) and only ever warns; FORGE never resolves a run by itself.
+func checkInterruptedRuns(ctx context.Context, r RemoteRunner, d config.Deployment) Check {
+	res, err := r.Run(ctx, d.DeltactlPath, "runs", "list", "--instance", d.Instance, "-n", "20", "--json")
+	if err != nil {
+		return Check{"deltactl-runs", Warn, "cannot read the run history" + failSuffix(res)}
+	}
+	out := strings.ToLower(res.Stdout)
+	if strings.Contains(out, "interrumpida") || strings.Contains(out, "interrupted") {
+		return Check{"deltactl-runs", Warn, "an operation is marked interrupted: deltactl blocks new operations until it is reviewed (deltactl runs show last, then runs resolve <id>)"}
+	}
+	return Check{"deltactl-runs", OK, "no interrupted operations in the last 20 runs"}
 }

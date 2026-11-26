@@ -37,9 +37,11 @@ type App struct {
 	RunnerIn func(dir string) execx.Runner
 	// Streamer carries large outputs (docker save) to disk without buffering them.
 	Streamer execx.Streamer
-	// Exec runs the ssh binary (with stdin for uploads).
-	Exec execx.StdinRunner
-	Now  func() time.Time
+	// Exec runs the ssh binary (with stdin for uploads); ExecLive does the same but streams the output
+	// to the terminal, for long remote operations such as deploy.
+	Exec     execx.StdinRunner
+	ExecLive execx.StdinRunner
+	Now      func() time.Time
 }
 
 // command is one top-level subcommand.
@@ -54,6 +56,7 @@ func (a *App) commands() map[string]command {
 		"init":     {"Create a forge.yaml example", (*App).cmdInit},
 		"package":  {"Export images and write manifest and checksums", (*App).cmdPackage},
 		"config":   {"Configuration tools (config validate)", (*App).cmdConfig},
+		"deploy":   {"Build, package, transfer and deploy with deltactl", (*App).cmdDeploy},
 		"doctor":   {"Diagnose Docker, SSH and the configuration", (*App).cmdDoctor},
 		"transfer": {"Upload a packaged release to the host and verify it", (*App).cmdTransfer},
 		"version":  {"Show the FORGE version", (*App).cmdVersion},
@@ -130,6 +133,7 @@ func (a *App) sshClient(cfg *config.Config, log *slog.Logger) *transport.Client 
 	return &transport.Client{
 		Target:  transport.Target{Host: d.Host, User: d.User, Port: d.SSHPort, KnownHosts: d.KnownHosts, SSHKey: d.SSHKey},
 		Exec:    a.Exec,
+		Live:    a.ExecLive,
 		Log:     log,
 		HomeDir: a.HomeDir,
 	}
